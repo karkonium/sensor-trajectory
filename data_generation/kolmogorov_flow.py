@@ -41,55 +41,55 @@ def generate_cfd_kolmogorov_flow(n_timesteps: int,
     cache_file = cache_dir / f"kolmo_{key}.npz"
     if use_cache and cache_file.exists():
         data = np.load(cache_file)
-        return data["u_field"], data["v_field"]
+        u_field, v_field = data["u_field"], data["v_field"]
+    else:
+        # FluidSim parameter 
+        params = Simul.create_default_params()
+        params.oper.nx, params.oper.ny = nx, ny
+        params.oper.Lx, params.oper.Ly = lx, ly
+        params.oper.type_fft = "fft2d.with_pyfftw"
 
-    # FluidSim parameter 
-    params = Simul.create_default_params()
-    params.oper.nx, params.oper.ny = nx, ny
-    params.oper.Lx, params.oper.Ly = lx, ly
-    params.oper.type_fft = "fft2d.with_pyfftw"
+        params.nu_2 = nu
 
-    params.nu_2 = nu
+        # Fixed time step; we step manually
+        params.time_stepping.USE_CFL = False
+        params.time_stepping.deltat0 = dt
+        params.time_stepping.t_end = n_timesteps * dt
 
-    # Fixed time step; we step manually
-    params.time_stepping.USE_CFL = False
-    params.time_stepping.deltat0 = dt
-    params.time_stepping.t_end = n_timesteps * dt
+        # Kolmogorov forcing
+        params.forcing.enable = True
+        params.forcing.type = "kolmogorov_flow"
+        params.forcing.kolmo.ik = kf
+        params.forcing.kolmo.amplitude = forcing_amp
 
-    # Kolmogorov forcing
-    params.forcing.enable = True
-    params.forcing.type = "kolmogorov_flow"
-    params.forcing.kolmo.ik = kf
-    params.forcing.kolmo.amplitude = forcing_amp
+        # Noise initial condition 
+        params.init_fields.type = "noise"
+        params.init_fields.noise.length = ly / kf 
 
-    # Noise initial condition 
-    params.init_fields.type = "noise"
-    params.init_fields.noise.length = ly / kf 
+        # Silence outputs and save nothing on disk
+        params.output.sub_directory = tempfile.mkdtemp()
+        params.output.HAS_TO_SAVE = False
+        params.output.periods_print.print_stdout = n_timesteps + 1
 
-    # Silence outputs and save nothing on disk
-    params.output.sub_directory = tempfile.mkdtemp()
-    params.output.HAS_TO_SAVE = False
-    params.output.periods_print.print_stdout = n_timesteps + 1
+        # run solver 
+        sim = Simul(params)
+        sim.state.statephys_from_statespect()  # create physical arrays 
 
-    # run solver 
-    sim = Simul(params)
-    sim.state.statephys_from_statespect()  # create physical arrays 
+        u_field = np.empty((n_timesteps, nx, ny), dtype=np.float32)
+        v_field = np.empty_like(u_field)
 
-    u_field = np.empty((n_timesteps, nx, ny), dtype=np.float32)
-    v_field = np.empty_like(u_field)
+        for it in range(n_timesteps):
+            # store current physical fields
+            u_field[it] = sim.state.get_var("ux").copy()
+            v_field[it] = sim.state.get_var("uy").copy()
 
-    for it in range(n_timesteps):
-        # store current physical fields
-        u_field[it] = sim.state.get_var("ux").copy()
-        v_field[it] = sim.state.get_var("uy").copy()
+            # advance one RK4 step, except after the last snapshot
+            if it < n_timesteps - 1:
+                sim.time_stepping.one_time_step()
+                sim.state.statephys_from_statespect()
 
-        # advance one RK4 step, except after the last snapshot
-        if it < n_timesteps - 1:
-            sim.time_stepping.one_time_step()
-            sim.state.statephys_from_statespect()
-
-    if use_cache:
-        np.savez_compressed(cache_file, u_field=u_field, v_field=v_field)
+        if use_cache:
+            np.savez_compressed(cache_file, u_field=u_field, v_field=v_field)
 
     if plot_series:
         n_show = n_timesteps // plot_every
