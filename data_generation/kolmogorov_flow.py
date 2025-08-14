@@ -103,7 +103,7 @@ def generate_cfd_kolmogorov_flow(n_timesteps: int,
         for ax, it_snap in zip(axs, idx):
             speed = np.sqrt(u_field[it_snap]**2 + v_field[it_snap]**2)
             im = ax.imshow(speed.T, origin="lower",
-                           extent=[0, lx, 0, ly], cmap="viridis")
+                           extent=[0, lx, 0, ly], cmap="viridis", aspect='equal')
             plt.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
             ax.quiver(X[::stride, ::stride], Y[::stride, ::stride],
                       u_field[it_snap, ::stride, ::stride],
