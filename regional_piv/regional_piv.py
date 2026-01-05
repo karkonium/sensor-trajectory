@@ -9,6 +9,8 @@ from matplotlib.colors import LinearSegmentedColormap
 
 import pysensors as ps
 
+from tqdm.auto import tqdm
+
 
 def _tile_bounds_from_center(ci, cj, win_nx, win_ny, nx, ny):
     """Clamp a (win_nx × win_ny) tile centered at (ci,cj) to image bounds."""
@@ -33,7 +35,10 @@ def _local_pod_qr_sensors(u_blk, v_blk):
     Returns selected *feature* indices from SSPOR (length = n_sensors_eff) and tile size.
     """
     W, nx_t, ny_t = u_blk.shape
-    X = np.concatenate([u_blk, v_blk], axis=2).reshape(W, nx_t * 2 * ny_t)
+    Xu = u_blk.reshape(W, -1)   # (W, grid_N)
+    Xv = v_blk.reshape(W, -1)   # (W, grid_N)
+    X  = np.concatenate([Xu, Xv], axis=1)   # (W, 2*grid_N)
+
     X = X - X.mean(axis=0, keepdims=True)
     
     # automatically compute rank
@@ -71,18 +76,31 @@ def _sliding_intervals(T, window_len, step=1):
     return out
 
 
-import os
-import numpy as np
-import matplotlib.pyplot as plt
-from joblib import Parallel, delayed
+def _uniform_centers(i_min, i_max, out_req):
+    """
+    Choose integer centers in [i_min, i_max] with uniform spacing and no duplicates.
 
-# assumes you already have:
-# _tile_bounds_from_center
-# _auto_rank_energy
-# _local_pod_qr_sensors
-# _tile_sensor_coords_global
-# _sliding_intervals
-# and pysindy imported as ps somewhere
+    Returns:
+      centers : (out_eff,) int array, strictly increasing (uniform step)
+      out_eff : int, len(centers)
+    """
+    span = i_max - i_min
+    if span < 0:
+        raise ValueError("i_max must be >= i_min")
+
+    out_req = int(min(max(out_req, 1), span + 1))  # prevent duplicates
+
+    if out_req == 1:
+        centers = np.array([(i_min + i_max) // 2], dtype=int)
+        return centers, 1
+
+    ideal = span / (out_req - 1)
+
+    step = max(1, int(round(ideal)))
+
+    centers = np.arange(i_min, i_max + 1, step, dtype=int)
+    return centers, int(len(centers))
+
 
 
 def regional_local_optimal_direction_series(
@@ -109,8 +127,9 @@ def regional_local_optimal_direction_series(
     to those sensors. No cross-window matching; each window is independent.
 
     Parallelization:
-      - If parallel=True, time windows are processed in parallel with joblib (threading backend).
-      - Plotting is done *after* all windows are computed, and works in both serial + parallel modes.
+      - If parallel=True, tiles inside each window are processed in parallel with joblib
+        (threading backend). Windows themselves are processed serially.
+      - If parallel=False, both windows and tiles are processed serially.
 
     Plotting:
       - If show=True, figures are displayed with plt.show().
@@ -132,16 +151,23 @@ def regional_local_optimal_direction_series(
     wx_phys, wy_phys = phys_window
     win_nx = max(3, int(round(wx_phys / dx)))
     win_ny = max(3, int(round(wy_phys / dy)))
-    if win_nx % 2 == 0: win_nx += 1
-    if win_ny % 2 == 0: win_ny += 1
+    if win_nx % 2 == 0:
+        win_nx += 1
+    if win_ny % 2 == 0:
+        win_ny += 1
 
     # centers placed so tiles stay in-bounds
     i_min = win_nx // 2
     j_min = win_ny // 2
     i_max = nx - 1 - i_min
     j_max = ny - 1 - j_min
-    centers_i = np.linspace(i_min, i_max, out_nx).astype(int)
-    centers_j = np.linspace(j_min, j_max, out_ny).astype(int)
+    centers_i, out_nx = _uniform_centers(i_min, i_max, out_nx)
+    centers_j, out_ny = _uniform_centers(j_min, j_max, out_ny)
+    
+    assert np.all(np.diff(centers_i) > 0) and len(np.unique(np.diff(centers_i))) == 1
+    assert np.all(np.diff(centers_j) > 0) and len(np.unique(np.diff(centers_j))) == 1
+
+    print(f"Actual out_nx:{out_nx}, out_ny: {out_ny}")
 
     # fixed center coordinates (physical), same for all time windows
     centers_xy = np.array(
@@ -157,72 +183,75 @@ def regional_local_optimal_direction_series(
 
     move_series = np.zeros((K, M, 2), dtype=float)
 
-    # ---------- worker for ONE window (no plotting here) ----------
-    def _compute_window_vectors(w_idx, s, e):
-        vecs_this = []
-        for ci in centers_i:
-            for cj in centers_j:
-                i0, i1, j0, j1 = _tile_bounds_from_center(ci, cj, win_nx, win_ny, nx, ny)
+    # ---------- worker for ONE TILE inside ONE window ----------
+    def _compute_tile_vector(ci, cj, s, e):
+        """
+        Compute the sensor-direction vector for a single tile center (ci, cj)
+        over the time window [s, e).
+        """
+        i0, i1, j0, j1 = _tile_bounds_from_center(ci, cj, win_nx, win_ny, nx, ny)
 
-                # local time-space block
-                u_blk = u[s:e, i0:i1, j0:j1]
-                v_blk = v[s:e, i0:i1, j0:j1]
+        # local time-space block
+        u_blk = u[s:e, i0:i1, j0:j1]
+        v_blk = v[s:e, i0:i1, j0:j1]
 
-                # local POD–QR sensors
-                idx, nx_t, ny_t = _local_pod_qr_sensors(u_blk, v_blk)
-                coords = _tile_sensor_coords_global(idx, nx_t, ny_t, i0, j0)  # (m,2) global (i,j)
+        # local POD–QR sensors
+        idx, nx_t, ny_t = _local_pod_qr_sensors(u_blk, v_blk)
+        coords = _tile_sensor_coords_global(idx, nx_t, ny_t, i0, j0)  # (m,2) global (i,j)
 
-                # center (physical)
-                xc, yc = ci * dx, cj * dy
+        # center (physical)
+        xc, yc = ci * dx, cj * dy
 
-                if coords.size == 0:
-                    vec = np.array([0.0, 0.0], dtype=float)
-                else:
-                    xs = coords[:, 0] * dx
-                    ys = coords[:, 1] * dy
-                    d  = np.column_stack([xs - xc, ys - yc])  # (m,2) vectors center→sensor
-                    r  = np.linalg.norm(d, axis=1) + 1e-12
-                    dirs = d / r[:, None]                     # unit directions
-                    mean_dir = dirs.mean(axis=0)
-                    norm = np.linalg.norm(mean_dir) + 1e-12
-                    mean_dir = mean_dir / norm
+        if coords.size == 0:
+            raise RuntimeError("No sensors selected in tile; cannot form direction vector.")
 
-                    if scale_mode == "fixed" and (fixed_scale is not None):
-                        mag = float(fixed_scale)
-                    else:
-                        # default: scale by mean radius, clipped to half-window
-                        r_mean = float(np.mean(r))
-                        r_cap  = 0.5 * min(wx_phys, wy_phys)
-                        mag    = min(r_mean, r_cap)
 
-                    vec = mean_dir * mag
+        xs = coords[:, 0] * dx
+        ys = coords[:, 1] * dy
+        d  = np.column_stack([xs - xc, ys - yc])  # (m,2) vectors center→sensor
 
-                vecs_this.append(vec)
+        return d.mean(axis=0)
 
-        return w_idx, np.asarray(vecs_this, float)
-
-    # ------------------ compute all windows (parallel or serial) ------------------
-    if parallel:
-        # infer n_jobs from env if not explicitly provided
-        if n_jobs is None:
-            n_jobs = int(
-                os.environ.get(
-                    "PYTHON_THREADS",
-                    os.environ.get("OMP_NUM_THREADS", "1"),
-                )
+    # infer n_jobs from env if not explicitly provided
+    if n_jobs is None:
+        n_jobs = int(
+            os.environ.get(
+                "PYTHON_THREADS",
+                os.environ.get("OMP_NUM_THREADS", "1"),
             )
-
-        results = Parallel(n_jobs=n_jobs, backend="threading")(
-            delayed(_compute_window_vectors)(w_idx, s, e)
-            for w_idx, (s, e) in enumerate(intervals)
         )
-        for w_idx, vecs_this in results:
-            move_series[w_idx, :, :] = vecs_this
 
-    else:
-        for w_idx, (s, e) in enumerate(intervals):
-            _, vecs_this = _compute_window_vectors(w_idx, s, e)
-            move_series[w_idx, :, :] = vecs_this
+    # ------------------ compute all windows (tiles in parallel) ------------------
+    centers = [(ci, cj) for ci in centers_i for cj in centers_j]
+
+    for w_idx, (s, e) in enumerate(intervals):
+        print(f"[regional_piv] START window {w_idx+1}/{K} (t ∈ [{s},{e}))", flush=True)
+
+        if parallel:
+            # parallel over tiles
+            vecs_this = Parallel(
+                n_jobs=n_jobs,
+                backend="threading",
+                verbose=0,    # keep logs clean; we have our own prints
+            )(
+                delayed(_compute_tile_vector)(ci, cj, s, e)
+                for (ci, cj) in centers
+            )
+            vecs_this = np.asarray(vecs_this, float)
+        else:
+            # serial tiles with tqdm progress
+            vecs_this = []
+            for (ci, cj) in tqdm(
+                centers,
+                total=len(centers),
+                desc=f"Tiles (window {w_idx+1}/{K})"
+            ):
+                vecs_this.append(_compute_tile_vector(ci, cj, s, e))
+            vecs_this = np.asarray(vecs_this, float)
+
+        move_series[w_idx, :, :] = vecs_this
+
+        print(f"[regional_piv] DONE  window {w_idx+1}/{K} (t ∈ [{s},{e}))", flush=True)
 
     # ------------------ plotting pass (works for both modes) ------------------
     if show or save_plots:
