@@ -1,1 +1,7 @@
 */__pycache__
+*.png
+*.gif
+*.err
+*.out
+*/.flow_cache/*
+*.pickle

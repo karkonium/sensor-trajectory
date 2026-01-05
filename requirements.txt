@@ -2,8 +2,12 @@ numpy
 matplotlib
 pandas
 joblib
-pysensors
+python-sensors
 numbacs
 tqdm    
 pillow
+fluidsim
 imageio
+tqdm-joblib
+fluidfft
+pyfftw
