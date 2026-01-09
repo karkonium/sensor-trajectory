@@ -83,7 +83,7 @@ def run_flow_case(
     print(f"[{name}] out_nx={out_nx}, out_ny={out_ny}, WINDOW_LEN={window_len}", flush=True)
 
     # --- Regional PIV / sensor-direction series ---
-    res = regional_local_optimal_direction_series(
+    reg_piv = regional_local_optimal_direction_series(
         u, v, LX, LY, DT,
         phys_window=(LX * 0.2, LY * 0.2),
         time_window=window_len,
@@ -103,12 +103,12 @@ def run_flow_case(
     basename = f"{name}_ftle"
     print(f"[{name}] Saving regional piv pickle to {outdir}/", flush=True)
     
-    save_pickle(res, os.path.join(outdir, f"regional_piv_{name}.pickle"))
+    save_pickle(reg_piv, os.path.join(outdir, f"regional_piv_{name}.pickle"))
 
     # --- FTLE time series from that coarse velocity field ---
     ftle_fwd_series, ftle_bwd_series, x, y, t_centers = \
         compute_ftle_series_from_optimal_direction(
-            res,
+            reg_piv,
             lx=LX, ly=LY,
             time_window=window_len,
             dt=DT,
@@ -119,7 +119,7 @@ def run_flow_case(
             n_jobs=n_jobs,
         )
 
-    intervals = res.get("intervals", None)  # list of (s_frame, e_frame) for each V snapshot
+    intervals = reg_piv.get("intervals", None)  # list of (s_frame, e_frame) for each V snapshot
     K = len(intervals) if intervals is not None else None
 
     # mirror the exact k_starts logic used inside compute_ftle_series_from_optimal_direction
@@ -149,7 +149,7 @@ def run_flow_case(
         "stride": int(stride_eff),
         "dt": float(DT),
         "dt_snap": float(DT),  # since time_step=1 in your calls; else DT*time_step
-        "ftle_frame_spans": ftle_frame_spans,  # shape (N_ftle, 2) or None
+        "ftle_frame_spans": ftle_frame_spans,  # shape (N_ftle, 2) or None # currently unused in plotting.py
     }
 
 

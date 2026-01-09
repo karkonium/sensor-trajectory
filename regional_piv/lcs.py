@@ -53,6 +53,7 @@ def quiver_row(
     else:
         plt.close(fig)
 
+
 def velocity_from_optimal_direction(result_dict, time_window, dt):
     """
     Convert the 'move_series' from regional_local_optimal_direction_series into a
@@ -81,6 +82,104 @@ def velocity_from_optimal_direction(result_dict, time_window, dt):
     V_series = move_series / tau # / max(tau, 1e-12)   # (K, M, 2)
 
     return V_series, out_nx, out_ny
+
+
+def _run_ftle_windows(k_starts, worker, parallel=False, n_jobs=1):
+    """One place where joblib vs serial execution is decided."""
+    if parallel and len(k_starts) > 1:
+        return Parallel(
+            n_jobs=n_jobs,
+            backend="threading",
+            verbose=0,
+        )(
+            delayed(worker)(idx, k0)
+            for idx, k0 in enumerate(k_starts)
+        )
+    else:
+        return [
+            worker(idx, k0)
+            for idx, k0 in enumerate(k_starts)
+        ]
+
+
+def _compute_ftle_series_core(
+    V_series,
+    out_nx, out_ny,
+    xlim, ylim,
+    dt_snap,
+    ftle_len=None,
+    stride=1,
+    parallel=False,
+    n_jobs=None,
+    center_time_fn=None,
+):
+    """
+    Shared engine for FTLE time series. Both compute_ftle_series_from_optimal_direction
+    and compute_ftle_series_from_velocity_series call this.
+    """
+    V_series = np.asarray(V_series, dtype=np.float64)
+    K = V_series.shape[0]    # number of velocity snapshots
+
+    if ftle_len is None:
+        ftle_len = K  # use full series (old behaviour)
+
+    if ftle_len < 2:
+        raise ValueError("ftle_len must be at least 2 snapshots.")
+
+    # FTLE windows (start indices)
+    k_starts = list(range(0, K - ftle_len + 1, stride))
+    N_ftle = len(k_starts)
+
+    ftle_fwd_series = np.zeros((N_ftle, out_nx, out_ny), dtype=float)
+    ftle_bwd_series = np.zeros((N_ftle, out_nx, out_ny), dtype=float)
+    t_centers       = np.zeros(N_ftle, dtype=float)
+
+    if center_time_fn is None:
+        # default if caller doesn't care about physical frame mapping
+        def center_time_fn(k0):
+            return (k0 + 0.5 * ftle_len) * float(dt_snap)
+
+    # worker for one FTLE window (by index in k_starts)
+    def _ftle_window_worker(idx, k0):
+        k1 = k0 + ftle_len
+        print(f"[LCS] FTLE window {idx+1}/{N_ftle}: snapshots [{k0}, {k1})", flush=True)
+
+        V_slice = V_series[k0:k1]   # (ftle_len, M, 2) or (ftle_len, out_nx, out_ny, 2)
+        ftle_fwd_k, x, y = _ftle_from_velocity_series(
+            V_slice, out_nx, out_ny, xlim, ylim, dt_snap, direction="forward"
+        )
+        ftle_bwd_k, _, _ = _ftle_from_velocity_series(
+            V_slice, out_nx, out_ny, xlim, ylim, dt_snap, direction="backward"
+        )
+        t_center = float(center_time_fn(k0))
+        return idx, ftle_fwd_k, ftle_bwd_k, t_center, x, y
+
+    # infer n_jobs if needed
+    if n_jobs is None:
+        n_jobs = int(
+            os.environ.get(
+                "PYTHON_THREADS",
+                os.environ.get("OMP_NUM_THREADS", "1"),
+            )
+        )
+
+    # run all FTLE windows (shared parallelization path)
+    results = _run_ftle_windows(
+        k_starts,
+        _ftle_window_worker,
+        parallel=parallel,
+        n_jobs=n_jobs,
+    )
+
+    # gather results in the right order
+    x = y = None
+    for idx, ftle_fwd_k, ftle_bwd_k, t_center, x_k, y_k in results:
+        ftle_fwd_series[idx, :, :] = ftle_fwd_k
+        ftle_bwd_series[idx, :, :] = ftle_bwd_k
+        t_centers[idx] = t_center
+        x, y = x_k, y_k
+
+    return ftle_fwd_series, ftle_bwd_series, x, y, t_centers
 
 
 def _ftle_from_velocity_series(V_series_slice, out_nx, out_ny, xlim, ylim, dt_snap, direction="forward"):
@@ -127,6 +226,56 @@ def _ftle_from_velocity_series(V_series_slice, out_nx, out_ny, xlim, ylim, dt_sn
     ftle = ftle_grid_2D(flowmap, T, dx, dy)
 
     return ftle, x, y
+
+
+def compute_ftle_series_from_velocity_series(
+    V_series,        # (K, out_nx, out_ny, 2)
+    lx, ly,
+    dt_snap,
+    ftle_len=None,
+    stride=1,
+    parallel=False,
+    n_jobs=None,
+    xlim=None,
+    ylim=None,
+):
+    """
+    Compute a TIME SERIES of FTLE fields from ANY velocity series on a uniform grid.
+
+    V_series : (K, out_nx, out_ny, 2)
+    lx, ly   : physical domain size (used for default extents if xlim/ylim not provided)
+    dt_snap  : time between snapshots in V_series
+
+    Returns:
+      ftle_fwd_series : (N_ftle, out_nx, out_ny)
+      ftle_bwd_series : (N_ftle, out_nx, out_ny)
+      x, y            : 1D coordinates
+      t_centers       : physical time associated with each FTLE field
+    """
+    V_series = np.asarray(V_series, dtype=np.float64)
+    if V_series.ndim != 4 or V_series.shape[-1] != 2:
+        raise ValueError("V_series must have shape (K, out_nx, out_ny, 2).")
+
+    K, out_nx, out_ny, _ = V_series.shape
+
+    if xlim is None:
+        xlim = (0.0, float(lx))
+    if ylim is None:
+        ylim = (0.0, float(ly))
+
+    return _compute_ftle_series_core(
+        V_series=V_series,
+        out_nx=out_nx,
+        out_ny=out_ny,
+        xlim=xlim,
+        ylim=ylim,
+        dt_snap=float(dt_snap),
+        ftle_len=ftle_len,
+        stride=stride,
+        parallel=parallel,
+        n_jobs=n_jobs,
+        center_time_fn=None,
+    )
 
 
 def compute_ftle_series_from_optimal_direction(
@@ -176,14 +325,6 @@ def compute_ftle_series_from_optimal_direction(
     # dt between V-series snapshots (regional windows)
     dt_snap = float(time_step) * float(dt)
 
-    # FTLE windows (start indices)
-    k_starts = list(range(0, K - ftle_len + 1, stride))
-    N_ftle = len(k_starts)
-
-    ftle_fwd_series = np.zeros((N_ftle, out_nx, out_ny), dtype=float)
-    ftle_bwd_series = np.zeros((N_ftle, out_nx, out_ny), dtype=float)
-    t_centers       = np.zeros(N_ftle, dtype=float)
-
     intervals = result_dict.get("intervals", None)
     centers_xy = result_dict.get("centers_xy", None)
     x0 = float(centers_xy[:, 0].min())
@@ -201,55 +342,19 @@ def compute_ftle_series_from_optimal_direction(
         else:
             return (k0 + 0.5 * ftle_len) * dt_snap
 
-    # worker for one FTLE window (by index in k_starts)
-    def _ftle_window_worker(idx, k0):
-        k1 = k0 + ftle_len
-        print(f"[LCS] FTLE window {idx+1}/{N_ftle}: snapshots [{k0}, {k1})", flush=True)
-
-        V_slice = V_series[k0:k1]   # (ftle_len, M, 2)
-        ftle_fwd_k, x, y = _ftle_from_velocity_series(
-            V_slice, out_nx, out_ny, (x0, x1), (y0, y1), dt_snap, direction="forward"
-        )
-        ftle_bwd_k, _, _ = _ftle_from_velocity_series(
-            V_slice, out_nx, out_ny, (x0, x1), (y0, y1), dt_snap, direction="backward"
-        )
-        t_center = _center_time(k0)
-        return idx, ftle_fwd_k, ftle_bwd_k, t_center, x, y
-
-    # infer n_jobs if needed
-    if n_jobs is None:
-        n_jobs = int(
-            os.environ.get(
-                "PYTHON_THREADS",
-                os.environ.get("OMP_NUM_THREADS", "1"),
-            )
-        )
-
-    # run all FTLE windows
-    if parallel and N_ftle > 1:
-        results = Parallel(
-            n_jobs=n_jobs,
-            backend="threading",
-            verbose=0,
-        )(
-            delayed(_ftle_window_worker)(idx, k0)
-            for idx, k0 in enumerate(k_starts)
-        )
-    else:
-        results = [
-            _ftle_window_worker(idx, k0)
-            for idx, k0 in enumerate(k_starts)
-        ]
-
-    # gather results in the right order
-    x = y = None
-    for idx, ftle_fwd_k, ftle_bwd_k, t_center, x_k, y_k in results:
-        ftle_fwd_series[idx, :, :] = ftle_fwd_k
-        ftle_bwd_series[idx, :, :] = ftle_bwd_k
-        t_centers[idx] = t_center
-        x, y = x_k, y_k
-
-    return ftle_fwd_series, ftle_bwd_series, x, y, t_centers
+    return _compute_ftle_series_core(
+        V_series=V_series,
+        out_nx=out_nx,
+        out_ny=out_ny,
+        xlim=(x0, x1),
+        ylim=(y0, y1),
+        dt_snap=dt_snap,
+        ftle_len=ftle_len,
+        stride=stride,
+        parallel=parallel,
+        n_jobs=n_jobs,
+        center_time_fn=_center_time,
+    )
 
 
 def save_ftle_series_plots(
