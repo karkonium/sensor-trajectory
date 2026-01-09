@@ -164,6 +164,7 @@ def regional_local_optimal_direction_series(
     centers_i, out_nx = _uniform_centers(i_min, i_max, out_nx)
     centers_j, out_ny = _uniform_centers(j_min, j_max, out_ny)
     
+    # ensure all dx, dy are the same and non-zero
     assert np.all(np.diff(centers_i) > 0) and len(np.unique(np.diff(centers_i))) == 1
     assert np.all(np.diff(centers_j) > 0) and len(np.unique(np.diff(centers_j))) == 1
 
@@ -183,7 +184,7 @@ def regional_local_optimal_direction_series(
 
     move_series = np.zeros((K, M, 2), dtype=float)
 
-    # ---------- worker for ONE TILE inside ONE window ----------
+    # worker for ONE TILE inside ONE window 
     def _compute_tile_vector(ci, cj, s, e):
         """
         Compute the sensor-direction vector for a single tile center (ci, cj)
@@ -221,7 +222,7 @@ def regional_local_optimal_direction_series(
             )
         )
 
-    # ------------------ compute all windows (tiles in parallel) ------------------
+    # compute all windows (tiles in parallel) 
     centers = [(ci, cj) for ci in centers_i for cj in centers_j]
 
     for w_idx, (s, e) in enumerate(intervals):
@@ -253,7 +254,7 @@ def regional_local_optimal_direction_series(
 
         print(f"[regional_piv] DONE  window {w_idx+1}/{K} (t ∈ [{s},{e}))", flush=True)
 
-    # ------------------ plotting pass (works for both modes) ------------------
+    # plotting pass (works for both modes) 
     if show or save_plots:
         if save_plots:
             os.makedirs(plot_dir, exist_ok=True)

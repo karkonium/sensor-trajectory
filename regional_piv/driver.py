@@ -14,8 +14,7 @@ from lcs import (
     save_ftle_series_plots,
 )
 
-# ------------------------ global settings ------------------------
-
+# global settings 
 WINDOW_LEN = 10        # regional PIV time_window (frames)
 TOTAL_STEPS = 150      # number of frames used per flow case
 PERIOD = 100           # used by some synthetic flows
@@ -27,8 +26,7 @@ STRIDE   = 1           # slide FTLE window by this many snapshots
 N_JOBS = int(os.environ.get("PYTHON_THREADS", "1"))
 
 
-# ------------------------ helpers ------------------------
-
+# helpers
 def save_pickle(obj, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "wb") as f:
@@ -184,7 +182,7 @@ def run_flow_case(
 
 if __name__ == "__main__":
 
-    # ------- 1) Moving vortex -------
+    # 1) Moving vortex 
     NX_mv, NY_mv = 300, 300
     LX_mv, LY_mv = 1.0, 1.0
     DT_mv = 1.0  # or whatever makes sense for this synthetic data
@@ -207,7 +205,7 @@ if __name__ == "__main__":
         out_ny=NY_mv // 3,
     )
 
-    # ------- 2) Kolmogorov flow -------
+    # 2) Kolmogorov flow 
     NX_k, NY_k = 300, 300
     LX_k, LY_k = 2 * np.pi, 2 * np.pi
     DT_base = 1e-3
@@ -242,7 +240,7 @@ if __name__ == "__main__":
     )
 
 
-    # ------- 3) Double gyre -------
+    # 3) Double gyre 
     NX_dg, NY_dg = 300, 150
     LX_dg, LY_dg = 2.0, 1.0
     DT_dg = 1.0

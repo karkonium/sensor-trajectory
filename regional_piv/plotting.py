@@ -208,7 +208,6 @@ if __name__ == "__main__":
 
 
     # You must have the fluid u,v arrays available here:
-        # ------- 1) Moving vortex -------
     NX_mv, NY_mv = 300, 300
     lx, ly = 1.0, 1.0
     DT_mv = 1.0  # or whatever makes sense for this synthetic data
