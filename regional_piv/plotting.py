@@ -13,27 +13,29 @@ def make_gif_from_dir(in_dir, out_gif, duration=0.1):
 
 def load_pickles(results_dir, name):
     with open(os.path.join(results_dir, f"regional_piv_{name}.pickle"), "rb") as f:
-        res = pickle.load(f)
+        reg_piv = pickle.load(f)
     with open(os.path.join(results_dir, f"ftle_{name}.pickle"), "rb") as f:
         ftle = pickle.load(f)
-    return res, ftle
+    return reg_piv, ftle
 
-def _k_starts_from(res, ftle):
-    K = np.asarray(res["move_series"]).shape[0]
+def _k_starts_from(reg_piv, ftle):
+    """Starting indicies of our intervals."""
+    K = np.asarray(reg_piv["move_series"]).shape[0]
     ftle_len = int(ftle["ftle_len"])
     stride   = int(ftle["stride"])
     return list(range(0, K - ftle_len + 1, stride))
 
-def mean_info_flow_for_idx(res, ftle, idx):
+def mean_info_flow_for_idx(reg_piv, ftle, idx):
     """Mean regional-PIV/info velocity over the FTLE integration window idx."""
-    move_series = np.asarray(res["move_series"])          # (K, M, 2)
-    out_nx = int(res["meta"]["centers_nx"])
-    out_ny = int(res["meta"]["centers_ny"])
-    W = int(res["meta"]["time_window"])
+    move_series = np.asarray(reg_piv["move_series"])          # (K, M, 2)
+    out_nx = int(reg_piv["meta"]["centers_nx"])
+    out_ny = int(reg_piv["meta"]["centers_ny"])
+    W = int(reg_piv["meta"]["time_window"])
     dt = float(ftle.get("dt", 1.0))
     tau = W * dt                                          # MUST match your FTLE code
 
-    k_starts = _k_starts_from(res, ftle)
+    # regional PIV interval used for LCS
+    k_starts = _k_starts_from(reg_piv, ftle)
     k0 = k_starts[idx]
     k1 = k0 + int(ftle["ftle_len"])
 
@@ -41,36 +43,22 @@ def mean_info_flow_for_idx(res, ftle, idx):
     Vmean = Vmean_M.reshape(out_nx, out_ny, 2)            # (out_nx,out_ny,2)
     return Vmean, (k0, k1)
 
-def mean_fluid_flow_for_idx(u, v, LX, LY, res, ftle, idx):
+def mean_fluid_flow_for_idx(u, v, LX, LY, reg_piv, ftle, idx):
     """Mean fluid velocity over ALL fluid frames used by FTLE window idx, sampled to FTLE grid."""
-    intervals = res.get("intervals", None)
-    if intervals is None:
-        raise ValueError("res has no 'intervals'—can’t map FTLE windows to fluid frames.")
-
-    k_starts = _k_starts_from(res, ftle)
+    intervals = reg_piv["intervals"]
+    k_starts = _k_starts_from(reg_piv, ftle)
     k0 = k_starts[idx]
     k1 = k0 + int(ftle["ftle_len"])
 
     s_frame = int(intervals[k0][0])
-    e_frame = int(intervals[k1 - 1][1])   # end of last included regional window
+    e_frame = int(intervals[k1 - 1][1])
 
     u_mean = u[s_frame:e_frame].mean(axis=0)
     v_mean = v[s_frame:e_frame].mean(axis=0)
 
-    NX, NY = u_mean.shape
-    dx = LX / (NX - 1)
-    dy = LY / (NY - 1)
+    Vmean_full = np.stack([u_mean, v_mean], axis=-1)  # (NX,NY,2)
+    return Vmean_full, (s_frame, e_frame)
 
-    x = np.asarray(ftle["x"])
-    y = np.asarray(ftle["y"])
-
-    ii = np.clip(np.rint(x / dx).astype(int), 0, NX - 1)
-    jj = np.clip(np.rint(y / dy).astype(int), 0, NY - 1)
-
-    Uc = u_mean[np.ix_(ii, jj)]
-    Vc = v_mean[np.ix_(ii, jj)]
-    Vmean = np.stack([Uc, Vc], axis=-1)
-    return Vmean, (s_frame, e_frame)
 
 def _normalize_for_display(V, x, y, frac=0.06):
     """Scale arrows to a fixed visible length (keeps quiver readable across frames)."""
@@ -105,10 +93,20 @@ def render_overlay_frames(
         vmax = np.percentile(ftle_field, 95)
 
         Vmean, meta = V_provider(idx)
-        Vplot = _normalize_for_display(Vmean, x, y)
+        if Vmean.shape[0] == len(x) and Vmean.shape[1] == len(y):
+            # coarse grid (same as FTLE grid)
+            Xq, Yq = Xg, Yg
+        else:
+            # full fluid grid
+            NX, NY = Vmean.shape[:2]
+            xq = np.linspace(0.0, LX, NX)
+            yq = np.linspace(0.0, LY, NY)
+            Xq, Yq = np.meshgrid(xq, yq, indexing="ij")
+        
+        Vplot = _normalize_for_display(Vmean, x if Xq is Xg else xq, y if Yq is Yg else yq)
         Vp = Vplot[::qskip, ::qskip, :]
-        Xp = Xg[::qskip, ::qskip]
-        Yp = Yg[::qskip, ::qskip]
+        Xp = Xq[::qskip, ::qskip]
+        Yp = Yq[::qskip, ::qskip]
 
         fig, ax = plt.subplots(1, 1, figsize=(7.2, 5.6), constrained_layout=True)
 
@@ -149,7 +147,7 @@ def render_overlay_frames(
 
 def make_two_overlay_gifs(results_dir, name, u, v, LX, LY,
                           which="forward", ridge_pct=92, qskip=2, duration=0.10):
-    res, ftle = load_pickles(results_dir, name)
+    reg_piv, ftle = load_pickles(results_dir, name)
 
     x = ftle["x"]
     y = ftle["y"]
@@ -161,10 +159,10 @@ def make_two_overlay_gifs(results_dir, name, u, v, LX, LY,
         ftle_series = np.asarray(ftle["ftle_forward"])
         lcs_label = "Forward FTLE"
 
-    # --- 1) FTLE + mean info flow (regional PIV) ---
+    # 1) FTLE + mean info flow (regional PIV) 
     outdir_info = os.path.join(results_dir, f"gif_frames_{name}_info")
     def info_provider(idx):
-        Vmean, (k0, k1) = mean_info_flow_for_idx(res, ftle, idx)
+        Vmean, (k0, k1) = mean_info_flow_for_idx(reg_piv, ftle, idx)
         return Vmean, f"k[{k0},{k1})"
     render_overlay_frames(
         ftle_series, x, y, LX, LY,
@@ -179,10 +177,10 @@ def make_two_overlay_gifs(results_dir, name, u, v, LX, LY,
     gif_info = os.path.join(results_dir, f"{name}_ftle_plus_info.gif")
     make_gif_from_dir(outdir_info, gif_info, duration=duration)
 
-    # --- 2) FTLE + mean fluid flow ---
+    # 2) FTLE + mean fluid flow 
     outdir_fluid = os.path.join(results_dir, f"gif_frames_{name}_fluid")
     def fluid_provider(idx):
-        Vmean, (s, e) = mean_fluid_flow_for_idx(u, v, LX, LY, res, ftle, idx)
+        Vmean, (s, e) = mean_fluid_flow_for_idx(u, v, LX, LY, reg_piv, ftle, idx)
         return Vmean, f"frames[{s},{e})"
     render_overlay_frames(
         ftle_series, x, y, LX, LY,
@@ -190,7 +188,7 @@ def make_two_overlay_gifs(results_dir, name, u, v, LX, LY,
         outdir=outdir_fluid,
         title_prefix=f"{name}: {lcs_label} + mean fluid-flow",
         ridge_pct=ridge_pct,
-        qskip=qskip,
+        qskip=qskip * 3,
         cmap="gray",
         alpha=0.80,
     )
@@ -198,31 +196,27 @@ def make_two_overlay_gifs(results_dir, name, u, v, LX, LY,
     make_gif_from_dir(outdir_fluid, gif_fluid, duration=duration)
 
     print("[DONE] Wrote:")
-    print("  ", gif_info)
+    # print("  ", gif_info)
     print("  ", gif_fluid)
 
 
 if __name__ == "__main__":
-    name = "moving_vortex"
-    results_dir = "ftle_series_moving_vortex"  # change to your folder
+    name = "double_gyre"
+    results_dir = "ftle_series_double_gyre"  # change to your folder
 
-
-    # You must have the fluid u,v arrays available here:
-    NX_mv, NY_mv = 300, 300
-    lx, ly = 1.0, 1.0
-    DT_mv = 1.0  # or whatever makes sense for this synthetic data
-
-    WINDOW_LEN = 10        # regional PIV time_window (frames)
     TOTAL_STEPS = 150      # number of frames used per flow case
     PERIOD = 100           # used by some synthetic flows
 
-    FTLE_LEN = 10          # FTLE integration length in regional snapshots
-    STRIDE   = 1           # slide FTLE window by this many snapshots
+    NX_dg, NY_dg = 300, 150
+    lx, ly = 2.0, 1.0
+    DT_dg = 1.0
 
-    u, v = generate_moving_vortex(
+    u, v = generate_double_gyre_flow(
         TOTAL_STEPS,
-        NX_mv, NY_mv,
+        NX_dg, NY_dg,
         lx, ly,
+        A=0.1,
+        epsilon=0.5,
         period=PERIOD,
     )
 
@@ -231,7 +225,7 @@ if __name__ == "__main__":
         name=name,
         u=u, v=v,
         LX=lx, LY=ly,
-        which="forward",   # or "backward"
+        which="backward",   # "forward" or "backward"
         ridge_pct=92,
         qskip=2,           # increase if arrows too dense
         duration=0.10,
