@@ -43,16 +43,16 @@ def _local_pod_qr_sensors(u_blk, v_blk):
     
     # automatically compute rank
     s = np.linalg.svd(X, full_matrices=False, compute_uv=False)
-    energy_tau = 0.99
+    energy_tau = 0.95
     r_auto = _auto_rank_energy(s, tau=energy_tau)
     n_basis_modes = r_auto
-    n_sensors = r_auto
+    n_sensors = 1
     
     basis = ps.basis.SVD(n_basis_modes=n_basis_modes, algorithm='arpack', random_state=90)
     # POD–QR: default optimizer is QR when you pass n_sensors into SSPOR directly
-    n_sensors_eff = int(min(n_sensors, n_basis_modes))
-    model = ps.SSPOR(n_sensors=n_sensors_eff, basis=basis)
+    model = ps.SSPOR(n_sensors=n_sensors, basis=basis)
     model.fit(X)
+
     return np.asarray(model.selected_sensors, dtype=int), nx_t, ny_t
 
 
