@@ -13,6 +13,9 @@ from lcs import (
     compute_ftle_series_from_optimal_direction,
     save_ftle_series_plots,
 )
+from plotting import make_gif_from_dir, overlay_lcs_with_flows
+from overlay_lcs import make_overlap_gif
+
 
 # global settings 
 WINDOW_LEN = 10        # regional PIV time_window (frames)
@@ -31,27 +34,6 @@ def save_pickle(obj, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "wb") as f:
         pickle.dump(obj, f, protocol=pickle.HIGHEST_PROTOCOL)
-
-
-def make_gif_from_dir(in_dir, out_gif, duration=0.1):
-    """
-    Build an animated GIF from all images in `in_dir`, saved as `out_gif`.
-    """
-    files = sorted(
-        f for f in os.listdir(in_dir)
-        if f.lower().endswith((".png", ".jpg", ".jpeg"))
-    )
-    if not files:
-        print(f"[GIF] No image files found in {in_dir}, skipping GIF.")
-        return
-
-    frames = []
-    for fname in files:
-        img_path = os.path.join(in_dir, fname)
-        frames.append(imageio.imread(img_path))
-
-    imageio.mimsave(out_gif, frames, duration=duration)
-    print(f"[GIF] Saved GIF: {out_gif}")
 
 
 def run_flow_case(
@@ -82,10 +64,10 @@ def run_flow_case(
     print(f"[{name}] u.shape = {u.shape}, LX={LX}, LY={LY}, DT={DT}", flush=True)
     print(f"[{name}] out_nx={out_nx}, out_ny={out_ny}, WINDOW_LEN={window_len}", flush=True)
 
-    # --- Regional PIV / sensor-direction series ---
+    # Regional PIV / sensor-direction series 
     reg_piv = regional_local_optimal_direction_series(
         u, v, LX, LY, DT,
-        phys_window=(LX * 0.2, LY * 0.2),
+        phys_window=(LX * 0.05, LY * 0.05),
         time_window=window_len,
         out_nx=out_nx, out_ny=out_ny,
         time_step=1,
@@ -98,14 +80,14 @@ def run_flow_case(
         n_jobs=n_jobs,
     )
 
-        # --- Save FTLE plots ---
+    # Save FTLE plots 
     outdir = f"ftle_series_{name}"
     basename = f"{name}_ftle"
     print(f"[{name}] Saving regional piv pickle to {outdir}/", flush=True)
     
     save_pickle(reg_piv, os.path.join(outdir, f"regional_piv_{name}.pickle"))
 
-    # --- FTLE time series from that coarse velocity field ---
+    # FTLE time series from that coarse velocity field 
     ftle_fwd_series, ftle_bwd_series, x, y, t_centers = \
         compute_ftle_series_from_optimal_direction(
             reg_piv,
@@ -156,7 +138,6 @@ def run_flow_case(
     save_pickle(ftle_payload, os.path.join(outdir, f"ftle_{name}.pickle"))
 
 
-
     save_ftle_series_plots(
         ftle_fwd_series,
         ftle_bwd_series,
@@ -171,11 +152,35 @@ def run_flow_case(
         show=False,
     )
 
-    # --- Make GIF from those plots ---
+    # Make GIF from those plots 
     gif_name = f"{name}_ftle.gif"
     gif_path = os.path.join(outdir, gif_name)
     make_gif_from_dir(outdir, gif_path, duration=0.1)
 
+    
+    overlay_lcs_with_flows(
+        reg_piv=reg_piv, 
+        ftle=ftle_payload,
+        results_dir=outdir,
+        name=name,
+        u=u, v=v,
+        LX=LX, LY=LY,
+        which="backward",   # "forward" or "backward"
+        ridge_pct=92,
+        qskip=2,           # increase if arrows too dense
+        duration=0.10,
+    )
+
+    gif_path = make_overlap_gif(
+        reg_piv=reg_piv, ftle=ftle_payload,
+        results_dir=outdir,
+        name=name,
+        u=u, v=v,
+        LX=LX, LY=LY,
+        which="backward",   # or "forward"
+        duration=0.10,
+    )
+    
     print(f"===== Done flow case: {name} =====\n", flush=True)
 
 
@@ -183,7 +188,7 @@ def run_flow_case(
 if __name__ == "__main__":
 
     # 1) Moving vortex 
-    NX_mv, NY_mv = 300, 300
+    NX_mv, NY_mv = 900, 900
     LX_mv, LY_mv = 1.0, 1.0
     DT_mv = 1.0  # or whatever makes sense for this synthetic data
 
@@ -206,7 +211,7 @@ if __name__ == "__main__":
     )
 
     # 2) Kolmogorov flow 
-    NX_k, NY_k = 300, 300
+    NX_k, NY_k = 900, 900
     LX_k, LY_k = 2 * np.pi, 2 * np.pi
     DT_base = 1e-3
 
@@ -241,7 +246,7 @@ if __name__ == "__main__":
 
 
     # 3) Double gyre 
-    NX_dg, NY_dg = 300, 150
+    NX_dg, NY_dg = 900, 450
     LX_dg, LY_dg = 2.0, 1.0
     DT_dg = 1.0
 
