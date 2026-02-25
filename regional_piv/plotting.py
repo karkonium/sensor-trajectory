@@ -50,7 +50,7 @@ def mean_info_flow_for_idx(reg_piv, ftle, idx):
     out_ny = int(reg_piv["meta"]["centers_ny"])
     W = int(reg_piv["meta"]["time_window"])
     dt = float(ftle.get("dt", 1.0))
-    tau = W * dt                                          # MUST match your FTLE code
+    tau = W * dt                                          # MUST match our FTLE code
 
     # regional PIV interval used for LCS
     k_starts = _k_starts_from(reg_piv, ftle)
@@ -63,7 +63,13 @@ def mean_info_flow_for_idx(reg_piv, ftle, idx):
 
 
 def mean_fluid_flow_for_idx(u, v, LX, LY, reg_piv, ftle, idx):
-    """Mean fluid velocity over ALL fluid frames used by FTLE window idx, sampled to FTLE grid."""
+    """
+    Mean underlying field over all fluid frames used by FTLE window idx.
+
+    Returns:
+      - vector mode (v is not None): (NX, NY, 2) mean velocity
+      - scalar mode (v is None):     (NX, NY) mean scalar field
+    """
     intervals = reg_piv["intervals"]
     k_starts = _k_starts_from(reg_piv, ftle)
     k0 = k_starts[idx]
@@ -72,8 +78,12 @@ def mean_fluid_flow_for_idx(u, v, LX, LY, reg_piv, ftle, idx):
     s_frame = int(intervals[k0][0])
     e_frame = int(intervals[k1 - 1][1])
 
-    u_mean = u[s_frame:e_frame].mean(axis=0)
-    v_mean = v[s_frame:e_frame].mean(axis=0)
+    u_mean = np.asarray(u[s_frame:e_frame].mean(axis=0), dtype=np.float64)
+
+    if v is None:
+        return u_mean, (s_frame, e_frame)
+
+    v_mean = np.asarray(v[s_frame:e_frame].mean(axis=0), dtype=np.float64)
 
     Vmean_full = np.stack([u_mean, v_mean], axis=-1)  # (NX,NY,2)
     return Vmean_full, (s_frame, e_frame)
@@ -113,20 +123,7 @@ def render_overlay_frames(
         vmax = np.percentile(ftle_field, 95)
 
         Vmean, meta = V_provider(idx)
-        if Vmean.shape[0] == len(x) and Vmean.shape[1] == len(y):
-            # coarse grid (same as FTLE grid)
-            Xq, Yq = Xg, Yg
-        else:
-            # full fluid grid
-            NX, NY = Vmean.shape[:2]
-            xq = np.linspace(0.0, LX, NX)
-            yq = np.linspace(0.0, LY, NY)
-            Xq, Yq = np.meshgrid(xq, yq, indexing="ij")
-        
-        Vplot = _normalize_for_display(Vmean, x if Xq is Xg else xq, y if Yq is Yg else yq)
-        Vp = Vplot[::qskip, ::qskip, :]
-        Xp = Xq[::qskip, ::qskip]
-        Yp = Yq[::qskip, ::qskip]
+        Vmean = np.asarray(Vmean)
 
         fig, ax = plt.subplots(1, 1, figsize=(7.2, 5.6), constrained_layout=True)
 
@@ -145,16 +142,67 @@ def render_overlay_frames(
         th = np.percentile(ftle_field, ridge_pct)
         ax.contour(Xg, Yg, ftle_field, levels=[th], colors="white", linewidths=1.2)
 
-        # quiver overlay (make it bright)
-        ax.quiver(
-            Xp, Yp,
-            Vp[..., 0], Vp[..., 1],
-            angles="xy",
-            scale_units="xy",
-            scale=None,
-            width=0.0028,
-            color="tab:orange",
-        )
+        if Vmean.ndim == 3 and Vmean.shape[-1] == 2:
+            # Vector field overlay.
+            if Vmean.shape[0] == len(x) and Vmean.shape[1] == len(y):
+                Xq, Yq = Xg, Yg
+                xq, yq = x, y
+            else:
+                NX, NY = Vmean.shape[:2]
+                xq = np.linspace(0.0, LX, NX)
+                yq = np.linspace(0.0, LY, NY)
+                Xq, Yq = np.meshgrid(xq, yq, indexing="ij")
+
+            Vplot = _normalize_for_display(Vmean, xq, yq)
+            Vp = Vplot[::qskip, ::qskip, :]
+            Xp = Xq[::qskip, ::qskip]
+            Yp = Yq[::qskip, ::qskip]
+
+            ax.quiver(
+                Xp, Yp,
+                Vp[..., 0], Vp[..., 1],
+                angles="xy",
+                scale_units="xy",
+                scale=None,
+                width=0.0028,
+                color="tab:orange",
+            )
+        elif Vmean.ndim == 2:
+            # Scalar field overlay: use translucent heatmap + isolines instead of quiver.
+            if Vmean.shape[0] == len(x) and Vmean.shape[1] == len(y):
+                Xs, Ys = Xg, Yg
+                extent_scalar = extent
+            else:
+                NX, NY = Vmean.shape
+                xs = np.linspace(0.0, LX, NX)
+                ys = np.linspace(0.0, LY, NY)
+                Xs, Ys = np.meshgrid(xs, ys, indexing="ij")
+                extent_scalar = (float(xs[0]), float(xs[-1]), float(ys[0]), float(ys[-1]))
+
+            s_lo = np.percentile(Vmean, 5)
+            s_hi = np.percentile(Vmean, 95)
+            if (not np.isfinite(s_lo)) or (not np.isfinite(s_hi)) or (s_hi <= s_lo):
+                s_lo = float(np.nanmin(Vmean))
+                s_hi = float(np.nanmax(Vmean) + 1e-12)
+
+            ax.imshow(
+                Vmean.T,
+                origin="lower",
+                extent=extent_scalar,
+                aspect="equal",
+                cmap="viridis",
+                alpha=0.35,
+                vmin=s_lo,
+                vmax=s_hi,
+            )
+
+            if s_hi > s_lo:
+                levels = np.linspace(s_lo, s_hi, 7)
+                ax.contour(Xs, Ys, Vmean, levels=levels, cmap="viridis", linewidths=0.8, alpha=0.85)
+        else:
+            raise ValueError(
+                "V_provider must return either a vector field (NX,NY,2) or scalar field (NX,NY)."
+            )
 
         ax.set_xlim(0, LX)
         ax.set_ylim(0, LY)
@@ -202,13 +250,14 @@ def overlay_lcs_with_flows(reg_piv, ftle, results_dir, name, u, v, LX, LY,
     def fluid_provider(idx):
         Vmean, (s, e) = mean_fluid_flow_for_idx(u, v, LX, LY, reg_piv, ftle, idx)
         return Vmean, f"frames[{s},{e})"
+    fluid_label = "mean fluid-flow" if v is not None else "mean scalar-field"
     render_overlay_frames(
         ftle_series, x, y, LX, LY,
         V_provider=fluid_provider,
         outdir=outdir_fluid,
-        title_prefix=f"{name}: {lcs_label} + mean fluid-flow",
+        title_prefix=f"{name}: {lcs_label} + {fluid_label}",
         ridge_pct=ridge_pct,
-        qskip=qskip * 3,
+        qskip=qskip * 3 if v is not None else qskip,
         cmap="gray",
         alpha=0.80,
     )
@@ -247,7 +296,7 @@ def _info_axes_from_centers_xy(reg_piv):
 
 def divergence_info_feild(
     reg_piv, results_dir, name,
-    u, v, LX, LY,
+    u, v, LX, LY, dt,
     outdir=None,
     title_prefix=None,
     stride=1,
@@ -264,7 +313,7 @@ def divergence_info_feild(
     GIF over REGIONAL PIV windows k:
       - Background: mean fluid speed over reg window [s:e) on full domain
       - Overlay: divergence of info velocity on info subdomain
-      - Quiver: mean fluid velocity (decimated) in tab:orange (like your FTLE overlay style)
+      - Quiver: mean fluid velocity (decimated) in tab:orange (like our FTLE overlay style)
 
     Also prints a divergence-of-mean-flow diagnostic.
     """
@@ -282,7 +331,6 @@ def divergence_info_feild(
     K = move_grid.shape[0]
 
     W  = int(reg_piv["meta"]["time_window"])
-    dt = float(ftle.get("dt", 1.0))
     tau = float(W * dt)
     V_info = move_grid / tau
 
@@ -294,7 +342,7 @@ def divergence_info_feild(
     dx_flow = float(LX / (NX - 1))
     dy_flow = float(LY / (NY - 1))
 
-    # precompute global div scale to avoid flicker (like your consistent look)
+    # precompute global div scale to avoid flicker (like our consistent look)
     if global_div_limits:
         div_vals = []
         for k in range(0, K, stride):
@@ -329,7 +377,7 @@ def divergence_info_feild(
         Vk = V_info[k]
         div_info = _divergence_2d(Vk[..., 0], Vk[..., 1], dx_info, dy_info)
 
-        # same "gentle contrast" style as your FTLE overlay:
+        # same "gentle contrast" style as our FTLE overlay:
         vmin_bg = np.percentile(speed, 5)
         vmax_bg = np.percentile(speed, 95)
 
@@ -358,7 +406,7 @@ def divergence_info_feild(
         cbar.set_label("div(info velocity)")
 
 
-        # quiver overlay (same look as yours)
+        # quiver overlay (same look as ours)
         qs = max(1, int(qskip))
         xq = np.linspace(0.0, LX, NX)
         yq = np.linspace(0.0, LY, NY)
@@ -391,22 +439,6 @@ def divergence_info_feild(
     gif_path = os.path.join(results_dir, f"{name}_div_info_over_mean_flow.gif")
     make_gif_from_dir(outdir, gif_path, duration=duration)
     return gif_path
-
-
-def _fft_wavenumbers_2d(NX, NY, LX, LY):
-    """
-    Physical wavenumbers (rad/length) consistent with FFT on a periodic domain.
-    Assumes samples are on x_j = j*LX/NX, y_j = j*LY/NY.
-    """
-    dx = LX / NX
-    dy = LY / NY
-
-    kx = 2.0 * np.pi * np.fft.fftfreq(NX, d=dx)
-    ky = 2.0 * np.pi * np.fft.fftfreq(NY, d=dy)
-
-    KX, KY = np.meshgrid(kx, ky, indexing="ij")
-    K = np.sqrt(KX**2 + KY**2)
-    return KX, KY, K
 
 
 
@@ -684,14 +716,6 @@ if __name__ == "__main__":
     #     duration=0.10,
     # )
 
-    plot_fluid_vs_info_spectra(
-        u=u, v=v, LX=LX, LY=LY,
-        reg_piv=reg_piv, ftle=ftle,
-        nbins=70,
-        fluid_t_indices=range(20, 120),  # pick a “steady” segment
-        info_k_indices=range(0, len(reg_piv["intervals"])),  # or a subset
-        save_path=os.path.join(results_dir, f"spectra_fluid_vs_info_3.png"),
+    divergence_info_feild(
+        reg_piv, results_dir, name, u, v, LX, LY, DT
     )
-    # divergence_info_feild(
-    #     reg_piv, results_dir, name, u, v, LX, LY
-    # )

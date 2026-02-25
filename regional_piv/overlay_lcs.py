@@ -137,6 +137,12 @@ def compute_fluid_ftle_series_matched(u, v, LX, LY, reg_piv, ftle, which="backwa
       - regional windows [k0:k1) -> fluid frames [f1:f2) using reg_piv["intervals"]
       - compute fluid FTLE on the FULL fluid grid (NX,NY) over u[f1:f2], v[f1:f2]
     """
+    if v is None:
+        raise ValueError(
+            "compute_fluid_ftle_series_matched requires vector input (u, v). "
+            "Scalar mode (v=None) is not supported by overlay_lcs.py."
+        )
+
     dt = float(ftle["dt"])  # must exist
     intervals = reg_piv["intervals"]
     k_starts  = _k_starts_from(reg_piv, ftle)
@@ -163,6 +169,12 @@ def compute_fluid_ftle_series_matched(u, v, LX, LY, reg_piv, ftle, which="backwa
 
 
 def make_overlap_gif(reg_piv, ftle, results_dir, name, u, v, LX, LY, which="backward", duration=0.10):
+    if v is None:
+        raise ValueError(
+            "make_overlap_gif requires vector input (u, v). "
+            "Use overlay_lcs_with_flows for scalar underlying fields."
+        )
+
     # info FTLE already computed
     ftle_info = np.asarray(ftle["ftle_backward"] if which.startswith("back") else ftle["ftle_forward"])
 

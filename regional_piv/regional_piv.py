@@ -31,16 +31,37 @@ def _auto_rank_energy(svals, tau=0.99):
 
 def _local_pod_qr_sensors(u_blk, v_blk):
     """
-    u_blk, v_blk: (W, nx_t, ny_t) local time-space block.
+    u_blk: (W, nx_t, ny_t) local time-space block (u-component OR scalar field)
+    v_blk: (W, nx_t, ny_t) local time-space block or None (scalar mode)
+
     Returns selected *feature* indices from SSPOR (length = n_sensors_eff) and tile size.
     """
     W, nx_t, ny_t = u_blk.shape
     Xu = u_blk.reshape(W, -1)   # (W, grid_N)
-    Xv = v_blk.reshape(W, -1)   # (W, grid_N)
-    X  = np.concatenate([Xu, Xv], axis=1)   # (W, 2*grid_N)
+    grid_N = nx_t * ny_t
+    
+    if v_blk is None:
+        X = Xu
+    else:
+        Xv = v_blk.reshape(W, -1)   # (W, grid_N)
+        X  = np.concatenate([Xu, Xv], axis=1)   # (W, 2*grid_N)
 
     X = X - X.mean(axis=0, keepdims=True)
-    
+
+    # prevent crash from when data matrix is all the same (i.e land is SST)
+    # UNIVERSAL degeneracy guards (prevents warnings + ARPACK issues) 
+    if (not np.all(np.isfinite(X))):
+        return np.asarray([grid_N // 2], dtype=int), nx_t, ny_t
+
+    # no energy 
+    if np.linalg.norm(X) < 1e-12:
+        return np.asarray([grid_N // 2], dtype=int), nx_t, ny_t
+
+    # no variance 
+    full_var = float(np.var(X, axis=0).sum())
+    if (not np.isfinite(full_var)) or (full_var <= 1e-12):
+        return np.asarray([grid_N // 2], dtype=int), nx_t, ny_t
+
     # automatically compute rank
     s = np.linalg.svd(X, full_matrices=False, compute_uv=False)
     energy_tau = 0.95
@@ -49,7 +70,6 @@ def _local_pod_qr_sensors(u_blk, v_blk):
     n_sensors = 1
     
     basis = ps.basis.SVD(n_basis_modes=n_basis_modes, algorithm='arpack', random_state=90)
-    # POD–QR: default optimizer is QR when you pass n_sensors into SSPOR directly
     model = ps.SSPOR(n_sensors=n_sensors, basis=basis)
     model.fit(X)
 
@@ -136,6 +156,9 @@ def regional_local_optimal_direction_series(
       - If save_plots=True, each plotted window is saved to `plot_dir/window_XXXX.png`.
     """
     T, nx, ny = u.shape
+    if (v is not None) and (v.shape != u.shape):
+        raise ValueError("u and v must have the same shape (T, nx, ny), or v must be None for scalar mode.")
+
     if t_end is None:
         t_end = T
     t_start = int(max(0, t_start))
@@ -194,11 +217,14 @@ def regional_local_optimal_direction_series(
 
         # local time-space block
         u_blk = u[s:e, i0:i1, j0:j1]
-        v_blk = v[s:e, i0:i1, j0:j1]
 
-        # local POD–QR sensors
-        idx, nx_t, ny_t = _local_pod_qr_sensors(u_blk, v_blk)
-        coords = _tile_sensor_coords_global(idx, nx_t, ny_t, i0, j0)  # (m,2) global (i,j)
+        if v is None:
+            idx, nx_t, ny_t = _local_pod_qr_sensors(u_blk, None)
+        else:
+            v_blk = v[s:e, i0:i1, j0:j1]
+            idx, nx_t, ny_t = _local_pod_qr_sensors(u_blk, v_blk)
+
+        coords = _tile_sensor_coords_global(idx, nx_t, ny_t, i0, j0)
 
         # center (physical)
         xc, yc = ci * dx, cj * dy
@@ -206,10 +232,9 @@ def regional_local_optimal_direction_series(
         if coords.size == 0:
             raise RuntimeError("No sensors selected in tile; cannot form direction vector.")
 
-
         xs = coords[:, 0] * dx
         ys = coords[:, 1] * dy
-        d  = np.column_stack([xs - xc, ys - yc])  # (m,2) vectors center→sensor
+        d  = np.column_stack([xs - xc, ys - yc])
 
         return d.mean(axis=0)
 
