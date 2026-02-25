@@ -42,7 +42,7 @@ def quiver_row(
             ax.set_title(f"w{k}")
         ax.set_xlabel("x"); ax.set_ylabel("y")
 
-    # --- save instead of show ---
+    # save instead of show 
     if outdir is not None:
         os.makedirs(outdir, exist_ok=True)
         fname = f"{basename}.png"
@@ -68,7 +68,6 @@ def velocity_from_optimal_direction(result_dict, time_window, dt):
     Returns:
       V_series : (K, M, 2) velocity snapshots
       out_nx, out_ny : grid shape
-      lx_ly        : convenience tuple if you want to re-use extents
     """
     move_series = result_dict["move_series"]  # (K, M, 2), "distance-to-sensors" vectors per window
     meta        = result_dict["meta"]
@@ -77,7 +76,7 @@ def velocity_from_optimal_direction(result_dict, time_window, dt):
     # pick a timescale τ (how quickly the field would move along those headings)
     
     # velocity = distance / τ
-    tau = time_window * dt
+    tau = dt # ideally dt * time_step, but time_step == 1 so we good
 
     V_series = move_series / tau # / max(tau, 1e-12)   # (K, M, 2)
 
