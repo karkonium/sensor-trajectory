@@ -5,3 +5,4 @@
 *.out
 */.flow_cache/*
 *.pickle
+*.nc
