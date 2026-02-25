@@ -75,13 +75,18 @@ def generate_cfd_kolmogorov_flow(n_timesteps: int,
         sim = Simul(params)
         sim.state.statephys_from_statespect()  # create physical arrays 
 
-        u_field = np.empty((n_timesteps, nx, ny), dtype=np.float32)
+        u_field = np.empty((n_timesteps // 10, nx, ny), dtype=np.float64) # for big runs
+        # u_field = np.empty((n_timesteps, nx, ny), dtype=np.float64) # for smaller runs
         v_field = np.empty_like(u_field)
 
         for it in range(n_timesteps):
             # store current physical fields
-            u_field[it] = sim.state.get_var("ux").copy()
-            v_field[it] = sim.state.get_var("uy").copy()
+            if it % 10 == 0: # for big runs
+                u_field[it // 10] = sim.state.get_var("ux")
+                v_field[it // 10] = sim.state.get_var("uy")
+
+            # u_field[it] = sim.state.get_var("ux")
+            # v_field[it] = sim.state.get_var("uy")
 
             # advance one RK4 step, except after the last snapshot
             if it < n_timesteps - 1:
@@ -119,12 +124,12 @@ def generate_cfd_kolmogorov_flow(n_timesteps: int,
 
 if __name__ == "__main__":
     u, v = generate_cfd_kolmogorov_flow(
-        n_timesteps=2000,
-        nx=128, ny=128,      
-        dt=1e-3,              
+        n_timesteps=20000,
+        nx=900, ny=900,      
+        dt=1e-4,              
         nu=2e-2, 
         forcing_amp=20.0, 
-        kf=4,
+        kf=10,
         plot_series=True,
         plot_every=200)
     print("Snapshots:", u.shape, "  v-rms:", np.sqrt((v**2).mean()))
