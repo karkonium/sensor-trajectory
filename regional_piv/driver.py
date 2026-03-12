@@ -36,17 +36,11 @@ def load_oisst_wkmean_scalar_masked(
     lsmask_path,
     n_steps=TOTAL_STEPS,
     t_start=0,
-    coarsen_lat=0,
-    coarsen_lon=0,
-    lat_slice=None,
-    lon_slice=None,
-    mask_ocean_is_true=True,  # if mask is already "ocean=True"
-    mask_threshold=0.5,       # used if coarsen mask
 ):
     """
     Returns:
-      s: scalar SST array shaped (T, NX, NY) where X=lon, Y=lat (your convention)
-         with land points = NaN
+      s: scalar SST array shaped (T, NX, NY) where X=lon, Y=lat (your convention),
+         with land points = NaN, and lat axis flipped.
       LX, LY: domain extents in coordinate units (degrees)
       DT: timestep (1.0 week)
     """
@@ -54,7 +48,7 @@ def load_oisst_wkmean_scalar_masked(
     ds = xr.open_dataset(sst_path, engine="netcdf4")
     sst = ds["sst"].isel(time=slice(t_start, t_start + n_steps))
 
-    # some OISST files include a singleton depth-like dim
+    # drop singleton depth-like dims if present
     for dim in ["zlev", "depth", "lev"]:
         if dim in sst.dims:
             sst = sst.squeeze(dim, drop=True)
@@ -66,30 +60,10 @@ def load_oisst_wkmean_scalar_masked(
         if dim in m.dims:
             m = m.squeeze(dim, drop=True)
 
-    # subset first (keeps alignment)
-    if lat_slice is not None:
-        sst = sst.sel(lat=slice(lat_slice[0], lat_slice[1]))
-        m   = m.sel(lat=slice(lat_slice[0], lat_slice[1]))
-    if lon_slice is not None:
-        sst = sst.sel(lon=slice(lon_slice[0], lon_slice[1]))
-        m   = m.sel(lon=slice(lon_slice[0], lon_slice[1]))
-
-    # convert mask to boolean ocean mask
+    # boolean ocean mask (assumes your lsmask usage is correct: True = valid/ocean)
     ocean_mask = m.astype(bool)
-    if not mask_ocean_is_true:
-        ocean_mask = ~ocean_mask
 
-    # optional coarsen (do BOTH field and mask consistently)
-    if (coarsen_lat and coarsen_lat > 1) or (coarsen_lon and coarsen_lon > 1):
-        sst = sst.coarsen(lat=coarsen_lat, lon=coarsen_lon, boundary="trim").mean()
-
-        # coarsen mask: keep cell as ocean if majority ocean
-        ocean_mask = (
-            ocean_mask.coarsen(lat=coarsen_lat, lon=coarsen_lon, boundary="trim").mean()
-            > mask_threshold
-        )
-
-    # apply mask: land -> NaN
+    # apply mask: land -> NaN (no filling)
     sst = sst.where(ocean_mask)
 
     # coords/extents
@@ -99,13 +73,16 @@ def load_oisst_wkmean_scalar_masked(
     LY = float(lat.max() - lat.min())
     DT = 1.0  # weekly mean
 
-    # to numpy: (T, lat, lon) -> (T, lon, lat)
+    # numpy: (T, lat, lon) -> (T, lon, lat)
     s = sst.values.astype(np.float32)
-    s = np.transpose(s, (0, 2, 1))
+    s = np.transpose(s, (0, 2, 1))  # (T, lon, lat)
+
+    # ALWAYS flip latitude axis (vertical flip)
+    s = s[:, :, ::-1]
 
     return s, LX, LY, DT
 
-
+    
 def save_pickle(obj, path):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "wb") as f:
@@ -145,7 +122,7 @@ def run_flow_case(
     # Regional PIV / sensor-direction series 
     reg_piv = regional_local_optimal_direction_series(
         u, v, LX, LY, DT,
-        phys_window=(LX * 0.05, LY * 0.05),
+        phys_window=(LX * 0.025, LY * 0.025),
         time_window=window_len,
         out_nx=out_nx, out_ny=out_ny,
         time_step=1,
@@ -264,7 +241,7 @@ def run_flow_case(
 
 
 if __name__ == "__main__":
-
+    """
     # 1) Moving vortex 
     NX_mv, NY_mv = 900, 900
     LX_mv, LY_mv = 1.0, 1.0
@@ -356,7 +333,7 @@ if __name__ == "__main__":
         out_nx=NX_dg // 3,
         out_ny=NY_dg // 3,
     )
-
+    """
     # 4) OISST SST scalar field
     SST_PATH  = "sst.wkmean.1990-present.nc"
     MASK_PATH = "lsmask.nc"
@@ -365,11 +342,6 @@ if __name__ == "__main__":
         SST_PATH, MASK_PATH,
         n_steps=TOTAL_STEPS,
         t_start=0,
-        coarsen_lat=0,
-        coarsen_lon=0,
-        lat_slice=None,
-        lon_slice=None,
-        mask_ocean_is_true=True,  
     )
 
     T_sst, NX_sst, NY_sst = s_sst.shape
@@ -381,8 +353,8 @@ if __name__ == "__main__":
         LX=LX_sst,
         LY=LY_sst,
         DT=DT_sst,
-        out_nx=NX_sst // 3,
-        out_ny=NY_sst // 3,
+        out_nx=NX_sst // 2,
+        out_ny=NY_sst // 2,
     )
 
     print("All flow cases completed.")
