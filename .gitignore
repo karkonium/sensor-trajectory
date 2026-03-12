@@ -1,4 +1,4 @@
-*/__pycache__
+*/__pycache__/*
 *.png
 *.gif
 *.err
@@ -6,3 +6,5 @@
 */.flow_cache/*
 *.pickle
 *.nc
+*.pyc
+*.csv

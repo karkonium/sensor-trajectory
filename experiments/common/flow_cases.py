@@ -1,0 +1,240 @@
+"""Standardized flow generation and sampling cases shared by experiment variants."""
+
+from dataclasses import dataclass
+
+import numpy as np
+
+from data_generation.cylinder_wake_flow import generate_cylinder_wake_from_netcdf
+from data_generation.double_gyre import generate_double_gyre_flow
+from data_generation.kolmogorov_flow import generate_cfd_kolmogorov_flow
+from data_generation.moving_vortex import generate_moving_vortex
+
+from .config import DomainConfig
+
+
+@dataclass
+class FlowCasePayload:
+    """Container for one standardized flow experiment input."""
+
+    flow_name: str
+    u: np.ndarray
+    v: np.ndarray
+    domain_config: DomainConfig
+    dt_actual: float
+    is_periodic: bool
+
+
+def _sample_kolmogorov_segment(u, v, total_steps, source_steps, start_raw_idx, end_raw_idx):
+    """Sample a requested raw-time index window from Kolmogorov snapshots.
+
+    Args:
+        u: u snapshots shaped (T_available, nx, ny).
+        v: v snapshots shaped (T_available, nx, ny).
+        total_steps: Number of output snapshots to select.
+        source_steps: CFD steps requested from solver before any internal decimation.
+        start_raw_idx: Start of desired raw-time segment.
+        end_raw_idx: End of desired raw-time segment.
+
+    Returns:
+        Tuple (u_sel, v_sel, idx_sel) with selected snapshots and used indices.
+    """
+    n_available = int(u.shape[0])
+    if n_available < 2:
+        raise ValueError("Kolmogorov output must contain at least 2 snapshots")
+
+    if n_available > end_raw_idx:
+        idx_sel = np.linspace(start_raw_idx, end_raw_idx, total_steps, dtype=int)
+        return u[idx_sel], v[idx_sel], idx_sel
+
+    stride = max(1, int(round(float(source_steps) / float(n_available))))
+    start_idx = int(round(start_raw_idx / stride))
+    end_idx = int(round(end_raw_idx / stride))
+
+    start_idx = max(0, min(start_idx, n_available - 1))
+    end_idx = max(start_idx, min(end_idx, n_available - 1))
+
+    idx_sel = np.linspace(start_idx, end_idx, total_steps, dtype=int)
+    return u[idx_sel], v[idx_sel], idx_sel
+
+
+def _generate_double_gyre_case(total_steps, period):
+    """Generate the canonical double-gyre test case.
+
+    Args:
+        total_steps: Number of snapshots.
+        period: Flow period.
+
+    Returns:
+        FlowCasePayload for double gyre.
+    """
+    nx, ny = 600, 300
+    lx, ly = 2.0, 1.0
+    u, v = generate_double_gyre_flow(
+        total_steps,
+        nx,
+        ny,
+        lx,
+        ly,
+        A=0.1,
+        epsilon=0.5,
+        period=period,
+    )
+    return FlowCasePayload(
+        flow_name="double_gyre",
+        u=u,
+        v=v,
+        domain_config=DomainConfig(nx=nx, ny=ny, lx=lx, ly=ly),
+        dt_actual=1.0,
+        is_periodic=False,
+    )
+
+
+def _generate_moving_vortex_case(total_steps, period):
+    """Generate the canonical moving-vortex test case.
+
+    Args:
+        total_steps: Number of snapshots.
+        period: Flow period.
+
+    Returns:
+        FlowCasePayload for moving vortex.
+    """
+    nx, ny = 600, 600
+    lx, ly = 1.0, 1.0
+    u, v = generate_moving_vortex(total_steps, nx, ny, lx, ly, period=period)
+    return FlowCasePayload(
+        flow_name="moving_vortex",
+        u=u,
+        v=v,
+        domain_config=DomainConfig(nx=nx, ny=ny, lx=lx, ly=ly),
+        dt_actual=1.0,
+        is_periodic=False,
+    )
+
+
+def _generate_kolmogorov_case(total_steps):
+    """Generate the canonical Kolmogorov-flow test case.
+
+    Args:
+        total_steps: Number of snapshots used by experiment runs.
+
+    Returns:
+        FlowCasePayload for kolmogorov flow.
+    """
+    nx, ny = 900, 900
+    source_steps = 20000
+
+    u_raw, v_raw = generate_cfd_kolmogorov_flow(
+        n_timesteps=source_steps,
+        nx=nx,
+        ny=ny,
+        dt=1e-4,
+        nu=2e-2,
+        forcing_amp=20.0,
+        kf=4,
+        plot_series=False,
+    )
+
+    u, v, selected_idx = _sample_kolmogorov_segment(
+        u_raw,
+        v_raw,
+        total_steps=total_steps,
+        source_steps=source_steps,
+        start_raw_idx=1500,
+        end_raw_idx=1999,
+    )
+
+    print(
+        f"Kolmogorov selection: available={u_raw.shape[0]} snapshots, "
+        f"selected idx range=[{int(selected_idx[0])}, {int(selected_idx[-1])}]"
+    )
+
+    return FlowCasePayload(
+        flow_name="kolmogorov",
+        u=u,
+        v=v,
+        domain_config=DomainConfig(nx=nx, ny=ny, lx=2 * np.pi, ly=2 * np.pi),
+        dt_actual=1e-3,
+        is_periodic=True,
+    )
+
+
+def _generate_cylinder_wake_case():
+    """Load and sample the canonical precomputed cylinder-wake test case.
+
+    Args:
+        None.
+
+    Returns:
+        FlowCasePayload for cylinder wake.
+    """
+    u_raw, v_raw, meta = generate_cylinder_wake_from_netcdf()
+
+    cylinder_steps = 400
+    sample_indices = np.linspace(
+        int(u_raw.shape[0] // 2),
+        int(u_raw.shape[0] - 1),
+        cylinder_steps,
+        dtype=int,
+    )
+    u = u_raw[sample_indices]
+    v = v_raw[sample_indices]
+
+    k_skip = int(sample_indices[1] - sample_indices[0])
+    dt_advect = float(k_skip * meta["dt"])
+
+    print(
+        "Cylinder wake selection: "
+        f"available={meta['n_time_available']} snapshots, "
+        f"selected={u.shape[0]}, "
+        f"idx range=[{int(sample_indices[0])}, {int(sample_indices[-1])}], "
+        f"k_skip={k_skip}, dt_advect={dt_advect}"
+    )
+
+    return FlowCasePayload(
+        flow_name="cylinder_wake",
+        u=u,
+        v=v,
+        domain_config=DomainConfig(
+            nx=meta["nx"],
+            ny=meta["ny"],
+            lx=meta["lx"],
+            ly=meta["ly"],
+        ),
+        dt_actual=dt_advect,
+        is_periodic=False,
+    )
+
+
+def generate_standard_flow_cases(total_steps=160, period=80, flow_names=None):
+    """Generate standardized flow payloads for selected flow names.
+
+    Args:
+        total_steps: Number of output snapshots for generated flows.
+        period: Shared period argument for supported generators.
+        flow_names: Optional ordered list of flow names to include.
+
+    Returns:
+        List of FlowCasePayload objects in requested order.
+    """
+    default_order = ["double_gyre", "moving_vortex", "kolmogorov", "cylinder_wake"]
+    selected_flow_names = list(flow_names) if flow_names is not None else default_order
+
+    payloads = []
+    for flow_name in selected_flow_names:
+        if flow_name == "double_gyre":
+            payloads.append(_generate_double_gyre_case(total_steps, period))
+            continue
+        if flow_name == "moving_vortex":
+            payloads.append(_generate_moving_vortex_case(total_steps, period))
+            continue
+        if flow_name == "kolmogorov":
+            payloads.append(_generate_kolmogorov_case(total_steps))
+            continue
+        if flow_name == "cylinder_wake":
+            payloads.append(_generate_cylinder_wake_case())
+            continue
+
+        raise ValueError(f"Unsupported flow case name: {flow_name!r}")
+
+    return payloads
