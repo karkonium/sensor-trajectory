@@ -1,4 +1,4 @@
-"""Driver for the sliding moving-sensor experiment variant."""
+"""Driver for the sliding moving-sensor experiment."""
 
 from pathlib import Path
 
@@ -6,7 +6,7 @@ import pandas as pd
 
 from experiments.common.config import ExperimentConfig
 from experiments.common.flow_cases import generate_standard_flow_cases
-from experiments.common.paths import build_variant_artifact_paths, ensure_artifact_dirs
+from experiments.common.paths import build_artifact_paths, ensure_artifact_dirs
 from experiments.sliding.pipeline import run_experiment_sliding
 
 
@@ -34,12 +34,12 @@ RAW_CSV_NAME = "raw_window_records.csv"
 AGGREGATED_CSV_NAME = "aggregated_mean_rmse.csv"
 
 
-def _run_single_flow(flow_case, variant_paths):
+def _run_single_flow(flow_case, artifact_paths):
     """Run sliding experiment for one flow payload.
 
     Args:
         flow_case: FlowCasePayload from generate_standard_flow_cases.
-        variant_paths: VariantArtifactPaths for sliding outputs.
+        artifact_paths: ArtifactPaths for sliding outputs.
 
     Returns:
         DataFrame with per-window RMSE records for one flow.
@@ -53,9 +53,9 @@ def _run_single_flow(flow_case, variant_paths):
 
     flow_frames_dir = None
     flow_gif_path = None
-    if variant_paths.frames_dir is not None:
-        flow_frames_dir = variant_paths.frames_dir / flow_case.flow_name
-        flow_gif_path = variant_paths.frames_dir / f"{flow_case.flow_name}.gif"
+    if artifact_paths.frames_dir is not None:
+        flow_frames_dir = artifact_paths.frames_dir / flow_case.flow_name
+        flow_gif_path = artifact_paths.frames_dir / f"{flow_case.flow_name}.gif"
 
     print(
         f"\n=== Sliding flow: {flow_case.flow_name} "
@@ -97,8 +97,8 @@ def main():
     Returns:
         None.
     """
-    variant_paths = build_variant_artifact_paths("sliding", include_frames=True)
-    ensure_artifact_dirs(variant_paths)
+    artifact_paths = build_artifact_paths("sliding", include_frames=True)
+    ensure_artifact_dirs(artifact_paths)
 
     flow_cases = generate_standard_flow_cases(
         total_steps=TOTAL_STEPS,
@@ -108,13 +108,13 @@ def main():
 
     all_records = []
     for flow_case in flow_cases:
-        flow_records = _run_single_flow(flow_case, variant_paths)
+        flow_records = _run_single_flow(flow_case, artifact_paths)
         all_records.append(flow_records)
 
     combined_df = pd.concat(all_records, ignore_index=True)
 
     if SAVE_RAW_CSV:
-        raw_csv_path = Path(variant_paths.results_dir) / RAW_CSV_NAME
+        raw_csv_path = Path(artifact_paths.results_dir) / RAW_CSV_NAME
         combined_df.to_csv(raw_csv_path, index=False)
         print(f"Saved raw records to {raw_csv_path}")
 
@@ -122,7 +122,7 @@ def main():
         aggregated_df = (
             combined_df.groupby(["flow", "placement", "basis"], as_index=False)["RMSE"].mean()
         )
-        aggregated_csv_path = Path(variant_paths.results_dir) / AGGREGATED_CSV_NAME
+        aggregated_csv_path = Path(artifact_paths.results_dir) / AGGREGATED_CSV_NAME
         aggregated_df.to_csv(aggregated_csv_path, index=False)
         print(f"Saved aggregated records to {aggregated_csv_path}")
 

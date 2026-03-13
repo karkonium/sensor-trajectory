@@ -6,7 +6,7 @@ import pandas as pd
 
 from experiments.common.config import ExperimentConfig
 from experiments.common.flow_cases import generate_standard_flow_cases
-from experiments.common.paths import build_variant_artifact_paths, ensure_artifact_dirs
+from experiments.common.paths import build_artifact_paths, ensure_artifact_dirs
 from experiments.common.plotting import save_boxplots_per_flow
 from experiments.random_trials.pipeline import run_random_trials_window_pod
 
@@ -64,7 +64,7 @@ def _run_single_flow(flow_case):
 
 
 def main():
-    """Run random-trials variant across all standard flow cases.
+    """Run random-trials experiment across all standard flow cases.
 
     Args:
         None.
@@ -72,8 +72,8 @@ def main():
     Returns:
         None.
     """
-    variant_paths = build_variant_artifact_paths("random_trials", include_frames=False)
-    ensure_artifact_dirs(variant_paths)
+    artifact_paths = build_artifact_paths("random_trials", include_frames=False)
+    ensure_artifact_dirs(artifact_paths)
 
     flow_cases = generate_standard_flow_cases(
         total_steps=TOTAL_STEPS,
@@ -95,8 +95,8 @@ def main():
     raw_df = pd.concat(all_records, ignore_index=True)
     aggregated_df = raw_df.groupby(["flow", "num_sensors", "placement"], as_index=False)["RMSE"].mean()
 
-    raw_csv_path = Path(variant_paths.results_dir) / RAW_CSV_NAME
-    aggregated_csv_path = Path(variant_paths.results_dir) / AGGREGATED_CSV_NAME
+    raw_csv_path = Path(artifact_paths.results_dir) / RAW_CSV_NAME
+    aggregated_csv_path = Path(artifact_paths.results_dir) / AGGREGATED_CSV_NAME
 
     raw_df.to_csv(raw_csv_path, index=False)
     aggregated_df.to_csv(aggregated_csv_path, index=False)
@@ -104,8 +104,8 @@ def main():
     print(f"Saved raw records to {raw_csv_path}")
     print(f"Saved aggregated records to {aggregated_csv_path}")
 
-    save_boxplots_per_flow(raw_df, variant_paths.plots_dir, placement_order=PLACEMENT_ORDER)
-    print(f"Saved boxplots to {variant_paths.plots_dir}")
+    save_boxplots_per_flow(raw_df, artifact_paths.plots_dir, placement_order=PLACEMENT_ORDER)
+    print(f"Saved boxplots to {artifact_paths.plots_dir}")
 
 
 if __name__ == "__main__":

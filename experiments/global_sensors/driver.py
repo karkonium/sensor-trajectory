@@ -1,4 +1,4 @@
-"""Driver for the Global-POD versus Window-POD comparison variant."""
+"""Driver for the Global-POD versus Window-POD comparison experiment."""
 
 from pathlib import Path
 
@@ -6,7 +6,7 @@ import pandas as pd
 
 from experiments.common.config import ExperimentConfig
 from experiments.common.flow_cases import generate_standard_flow_cases
-from experiments.common.paths import build_variant_artifact_paths, ensure_artifact_dirs
+from experiments.common.paths import build_artifact_paths, ensure_artifact_dirs
 from experiments.common.plotting import save_grouped_barh_by_flow, save_mean_rmse_vs_sensor_count
 from experiments.global_sensors.pipeline import run_pod_basis_comparison
 
@@ -71,8 +71,8 @@ def main():
     Returns:
         None.
     """
-    variant_paths = build_variant_artifact_paths("global_sensors", include_frames=False)
-    ensure_artifact_dirs(variant_paths)
+    artifact_paths = build_artifact_paths("global_sensors", include_frames=False)
+    ensure_artifact_dirs(artifact_paths)
 
     flow_cases = generate_standard_flow_cases(
         total_steps=TOTAL_STEPS,
@@ -97,8 +97,8 @@ def main():
     raw_df = pd.concat(all_records, ignore_index=True)
     aggregated_df = raw_df.groupby(["flow", "num_sensors", "basis", "method"], as_index=False)["RMSE"].mean()
 
-    raw_csv_path = Path(variant_paths.results_dir) / RAW_CSV_NAME
-    aggregated_csv_path = Path(variant_paths.results_dir) / AGGREGATED_CSV_NAME
+    raw_csv_path = Path(artifact_paths.results_dir) / RAW_CSV_NAME
+    aggregated_csv_path = Path(artifact_paths.results_dir) / AGGREGATED_CSV_NAME
 
     raw_df.to_csv(raw_csv_path, index=False)
     aggregated_df.to_csv(aggregated_csv_path, index=False)
@@ -106,14 +106,14 @@ def main():
     print(f"Saved raw records to {raw_csv_path}")
     print(f"Saved aggregated records to {aggregated_csv_path}")
 
-    save_mean_rmse_vs_sensor_count(aggregated_df, variant_paths.plots_dir)
+    save_mean_rmse_vs_sensor_count(aggregated_df, artifact_paths.plots_dir)
     save_grouped_barh_by_flow(
         aggregated_df,
-        variant_paths.plots_dir,
+        artifact_paths.plots_dir,
         method_order=METHOD_ORDER,
         basis_order=BASIS_ORDER,
     )
-    print(f"Saved summary plots to {variant_paths.plots_dir}")
+    print(f"Saved summary plots to {artifact_paths.plots_dir}")
 
 
 if __name__ == "__main__":

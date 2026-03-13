@@ -1,4 +1,4 @@
-"""Shared configuration objects for experiment variants."""
+"""Shared configuration objects for experiment modules."""
 
 
 class DomainConfig:

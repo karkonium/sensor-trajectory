@@ -1,4 +1,4 @@
-"""Standardized flow generation and sampling cases shared by experiment variants."""
+"""Standardized flow generation and sampling cases shared by experiments."""
 
 from dataclasses import dataclass
 
@@ -24,36 +24,36 @@ class FlowCasePayload:
     is_periodic: bool
 
 
-def _sample_kolmogorov_segment(u, v, total_steps, source_steps, start_raw_idx, end_raw_idx):
-    """Sample a requested raw-time index window from Kolmogorov snapshots.
+def _sample_kolmogorov_segment(u, v, total_steps, start_idx, end_idx):
+    """Subsample a requested index range from Kolmogorov snapshots.
 
     Args:
         u: u snapshots shaped (T_available, nx, ny).
         v: v snapshots shaped (T_available, nx, ny).
         total_steps: Number of output snapshots to select.
-        source_steps: CFD steps requested from solver before any internal decimation.
-        start_raw_idx: Start of desired raw-time segment.
-        end_raw_idx: End of desired raw-time segment.
+        start_idx: Start index of the segment to sample.
+        end_idx: End index of the segment to sample, inclusive.
 
     Returns:
         Tuple (u_sel, v_sel, idx_sel) with selected snapshots and used indices.
     """
+    if u.shape != v.shape:
+        raise ValueError("u and v must have identical shape")
+    if total_steps <= 1:
+        raise ValueError("total_steps must be > 1")
+
     n_available = int(u.shape[0])
     if n_available < 2:
         raise ValueError("Kolmogorov output must contain at least 2 snapshots")
 
-    if n_available > end_raw_idx:
-        idx_sel = np.linspace(start_raw_idx, end_raw_idx, total_steps, dtype=int)
-        return u[idx_sel], v[idx_sel], idx_sel
+    segment_start = max(0, int(start_idx))
+    segment_end = min(int(end_idx), n_available - 1)
+    if segment_end < segment_start:
+        raise ValueError(
+            f"Invalid segment [{start_idx}, {end_idx}] for available snapshots {n_available}"
+        )
 
-    stride = max(1, int(round(float(source_steps) / float(n_available))))
-    start_idx = int(round(start_raw_idx / stride))
-    end_idx = int(round(end_raw_idx / stride))
-
-    start_idx = max(0, min(start_idx, n_available - 1))
-    end_idx = max(start_idx, min(end_idx, n_available - 1))
-
-    idx_sel = np.linspace(start_idx, end_idx, total_steps, dtype=int)
+    idx_sel = np.linspace(segment_start, segment_end, int(total_steps), dtype=int)
     return u[idx_sel], v[idx_sel], idx_sel
 
 
@@ -122,10 +122,8 @@ def _generate_kolmogorov_case(total_steps):
         FlowCasePayload for kolmogorov flow.
     """
     nx, ny = 900, 900
-    source_steps = 20000
-
     u_raw, v_raw = generate_cfd_kolmogorov_flow(
-        n_timesteps=source_steps,
+        n_timesteps=20000,
         nx=nx,
         ny=ny,
         dt=1e-4,
@@ -139,9 +137,8 @@ def _generate_kolmogorov_case(total_steps):
         u_raw,
         v_raw,
         total_steps=total_steps,
-        source_steps=source_steps,
-        start_raw_idx=1500,
-        end_raw_idx=1999,
+        start_idx=1500,
+        end_idx=1999,
     )
 
     print(
@@ -154,7 +151,7 @@ def _generate_kolmogorov_case(total_steps):
         u=u,
         v=v,
         domain_config=DomainConfig(nx=nx, ny=ny, lx=2 * np.pi, ly=2 * np.pi),
-        dt_actual=1e-3,
+        dt_actual=1e-3, # different because CFD output is subsampled 
         is_periodic=True,
     )
 

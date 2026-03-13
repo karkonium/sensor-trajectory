@@ -3,15 +3,15 @@
 from pathlib import Path
 
 
-class VariantArtifactPaths:
-    """Container for variant artifact directories."""
+class ArtifactPaths:
+    """Container for experiment artifact directories."""
 
-    def __init__(self, variant_name, variant_dir, artifacts_dir, results_dir, plots_dir, frames_dir):
+    def __init__(self, experiment_name, experiment_dir, artifacts_dir, results_dir, plots_dir, frames_dir):
         """
         Args:
-            variant_name: Experiment variant name.
-            variant_dir: Root directory of the variant.
-            artifacts_dir: Root artifact directory for the variant.
+            experiment_name: Experiment name.
+            experiment_dir: Root directory of the experiment.
+            artifacts_dir: Root artifact directory for the experiment.
             results_dir: Result file directory.
             plots_dir: Plot file directory.
             frames_dir: Optional frame directory.
@@ -19,33 +19,33 @@ class VariantArtifactPaths:
         Returns:
             None.
         """
-        self.variant_name = variant_name
-        self.variant_dir = variant_dir
+        self.experiment_name = experiment_name
+        self.experiment_dir = experiment_dir
         self.artifacts_dir = artifacts_dir
         self.results_dir = results_dir
         self.plots_dir = plots_dir
         self.frames_dir = frames_dir
 
 
-def build_variant_artifact_paths(variant_name, include_frames=False):
-    """Build standardized artifact paths for one experiment variant.
+def build_artifact_paths(experiment_name, include_frames=False):
+    """Build standardized artifact paths for one experiment.
 
     Args:
-        variant_name: Variant folder name under experiments/.
+        experiment_name: Experiment folder name under `experiments/`.
         include_frames: Whether a frames directory should be created.
 
     Returns:
-        VariantArtifactPaths with variant-local artifact directories.
+        ArtifactPaths with experiment-local artifact directories.
     """
-    variant_dir = Path("experiments") / str(variant_name)
-    artifacts_dir = variant_dir / "artifacts"
+    experiment_dir = Path("experiments") / str(experiment_name)
+    artifacts_dir = experiment_dir / "artifacts"
     results_dir = artifacts_dir / "results"
     plots_dir = artifacts_dir / "plots"
     frames_dir = artifacts_dir / "frames" if include_frames else None
 
-    return VariantArtifactPaths(
-        variant_name=variant_name,
-        variant_dir=variant_dir,
+    return ArtifactPaths(
+        experiment_name=experiment_name,
+        experiment_dir=experiment_dir,
         artifacts_dir=artifacts_dir,
         results_dir=results_dir,
         plots_dir=plots_dir,
@@ -53,16 +53,16 @@ def build_variant_artifact_paths(variant_name, include_frames=False):
     )
 
 
-def ensure_artifact_dirs(variant_paths):
-    """Create artifact directories on disk for a variant.
+def ensure_artifact_dirs(artifact_paths):
+    """Create artifact directories on disk for an experiment.
 
     Args:
-        variant_paths: VariantArtifactPaths instance.
+        artifact_paths: ArtifactPaths instance.
 
     Returns:
         None.
     """
-    variant_paths.results_dir.mkdir(parents=True, exist_ok=True)
-    variant_paths.plots_dir.mkdir(parents=True, exist_ok=True)
-    if variant_paths.frames_dir is not None:
-        variant_paths.frames_dir.mkdir(parents=True, exist_ok=True)
+    artifact_paths.results_dir.mkdir(parents=True, exist_ok=True)
+    artifact_paths.plots_dir.mkdir(parents=True, exist_ok=True)
+    if artifact_paths.frames_dir is not None:
+        artifact_paths.frames_dir.mkdir(parents=True, exist_ok=True)

@@ -82,7 +82,6 @@ def fit_pod_basis(state_matrix, max_basis_dim, seed):
     pod_basis.fit(state_matrix)
     return pod_basis.basis_matrix_
 
-
 def fit_sspor_model(state_matrix, num_sensors, max_basis_dim, seed):
     """Fit SSPOR model on a snapshot matrix.
 

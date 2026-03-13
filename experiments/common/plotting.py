@@ -1,4 +1,4 @@
-"""Shared plotting helpers for experiment variants."""
+"""Shared plotting helpers for experiment modules."""
 
 from pathlib import Path
 
