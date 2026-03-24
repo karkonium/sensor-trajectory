@@ -24,7 +24,7 @@ class FlowCasePayload:
     is_periodic: bool
 
 
-def _sample_kolmogorov_segment(u, v, total_steps, start_idx, end_idx):
+def _sample_kolmogorov_segment(u, v, total_steps, start_idx, end_idx, original_dt):
     """Subsample a requested index range from Kolmogorov snapshots.
 
     Args:
@@ -33,14 +33,18 @@ def _sample_kolmogorov_segment(u, v, total_steps, start_idx, end_idx):
         total_steps: Number of output snapshots to select.
         start_idx: Start index of the segment to sample.
         end_idx: End index of the segment to sample, inclusive.
+        original_dt: Time spacing between consecutive stored Kolmogorov snapshots.
 
     Returns:
-        Tuple (u_sel, v_sel, idx_sel) with selected snapshots and used indices.
+        Tuple (u_sel, v_sel, idx_sel, dt_advect) with selected snapshots, used indices,
+        and the effective time spacing after subsampling.
     """
     if u.shape != v.shape:
         raise ValueError("u and v must have identical shape")
     if total_steps <= 1:
         raise ValueError("total_steps must be > 1")
+    if original_dt <= 0.0:
+        raise ValueError("original_dt must be > 0")
 
     n_available = int(u.shape[0])
     if n_available < 2:
@@ -54,7 +58,14 @@ def _sample_kolmogorov_segment(u, v, total_steps, start_idx, end_idx):
         )
 
     idx_sel = np.linspace(segment_start, segment_end, int(total_steps), dtype=int)
-    return u[idx_sel], v[idx_sel], idx_sel
+    k_skip = int(idx_sel[1] - idx_sel[0])
+    if k_skip <= 0:
+        raise ValueError(
+            f"Kolmogorov subsampling produced invalid spacing {k_skip} for total_steps={total_steps}"
+        )
+
+    dt_advect = float(k_skip * original_dt)
+    return u[idx_sel], v[idx_sel], idx_sel, dt_advect
 
 
 def _generate_double_gyre_case(total_steps, period):
@@ -121,29 +132,34 @@ def _generate_kolmogorov_case(total_steps):
     Returns:
         FlowCasePayload for kolmogorov flow.
     """
-    nx, ny = 900, 900
+    nx, ny = 300, 300
+    solver_dt = 1e-3
+    stored_snapshot_dt = 1e-3
+
     u_raw, v_raw = generate_cfd_kolmogorov_flow(
-        n_timesteps=20000,
+        n_timesteps=2000,
         nx=nx,
         ny=ny,
-        dt=1e-4,
+        dt=solver_dt,
         nu=2e-2,
         forcing_amp=20.0,
         kf=4,
         plot_series=False,
     )
 
-    u, v, selected_idx = _sample_kolmogorov_segment(
+    u, v, selected_idx, dt_advect = _sample_kolmogorov_segment(
         u_raw,
         v_raw,
         total_steps=total_steps,
-        start_idx=1500,
+        start_idx=1100,
         end_idx=1999,
+        original_dt=stored_snapshot_dt,
     )
 
     print(
         f"Kolmogorov selection: available={u_raw.shape[0]} snapshots, "
-        f"selected idx range=[{int(selected_idx[0])}, {int(selected_idx[-1])}]"
+        f"selected idx range=[{int(selected_idx[0])}, {int(selected_idx[-1])}], "
+        f"k_skip={int(selected_idx[1] - selected_idx[0])}, dt_advect={dt_advect}"
     )
 
     return FlowCasePayload(
@@ -151,7 +167,7 @@ def _generate_kolmogorov_case(total_steps):
         u=u,
         v=v,
         domain_config=DomainConfig(nx=nx, ny=ny, lx=2 * np.pi, ly=2 * np.pi),
-        dt_actual=1e-3, # different because CFD output is subsampled 
+        dt_actual=dt_advect,
         is_periodic=True,
     )
 
