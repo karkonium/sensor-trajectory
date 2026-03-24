@@ -1,4 +1,6 @@
-"""Loader helpers for precomputed cylinder-wake velocity datasets."""
+import numpy as np
+import xarray as xr
+from pathlib import Path
 
 
 def generate_cylinder_wake_from_netcdf(
@@ -34,9 +36,6 @@ def generate_cylinder_wake_from_netcdf(
             v: Array shaped (T, nx, ny).
             meta: Dictionary with nx, ny, lx, ly, dt, and selected indices.
     """
-    import numpy as np
-    import xarray as xr
-    from pathlib import Path
 
     if dataset_path is None:
         dataset_path = Path(__file__).resolve().parent / "cylinder2d.nc"
