@@ -57,9 +57,10 @@ def _sample_kolmogorov_segment(u, v, total_steps, start_idx, end_idx, original_d
             f"Invalid segment [{start_idx}, {end_idx}] for available snapshots {n_available}"
         )
 
-    idx_sel = np.linspace(segment_start, segment_end, int(total_steps), dtype=int)
+    stride = (segment_end - segment_start) // (total_steps - 1)
+    idx_sel = segment_start + stride * np.arange(total_steps)    
     k_skip = int(idx_sel[1] - idx_sel[0])
-    if k_skip <= 0:
+    if k_skip <= 0 or k_skip != stride:
         raise ValueError(
             f"Kolmogorov subsampling produced invalid spacing {k_skip} for total_steps={total_steps}"
         )
