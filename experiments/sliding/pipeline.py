@@ -184,7 +184,7 @@ def run_experiment_sliding(
     full_state_matrix = flatten_state(u, v)
     dx = experiment_config.domain.lx / nx
     dy = experiment_config.domain.ly / ny
-    max_flow_speed = max_sensor_speed)
+    max_flow_speed = max_sensor_speed
     cfl_advect = max_flow_speed * dt / min(dx, dy)
     print("max speed:", max_flow_speed)
     print(
