@@ -73,6 +73,17 @@ def _resolve_window_visual_paths(plot_windows, save_window_frames, run_name, fra
 
     return resolved_frames_dir, resolved_gif_path
 
+def _state_at_t(full_state_matrix, t_idx, total_steps):
+    """Return flattened state vector x(t_idx) regardless of matrix orientation."""
+    if full_state_matrix.shape[0] == total_steps:
+        return np.asarray(full_state_matrix[t_idx], dtype=float).ravel()
+    if full_state_matrix.shape[1] == total_steps:
+        return np.asarray(full_state_matrix[:, t_idx], dtype=float).ravel()
+    raise ValueError(
+        f"Could not infer time axis from full_state_matrix shape {full_state_matrix.shape} "
+        f"and total_steps={total_steps}"
+    )
+
 
 def run_experiment_sliding(
     u,
@@ -138,6 +149,7 @@ def run_experiment_sliding(
     intervals = get_sliding_intervals(total_steps, window_len + 1, step_size)
     if not intervals:
         raise ValueError("No sliding intervals produced; adjust window_len or step_size")
+    total_windows = len(intervals)
 
     lagrangian_sensor_positions = seed_sensor_grid(
         experiment_config.num_sensors,
@@ -153,6 +165,7 @@ def run_experiment_sliding(
     moving_flow_history = []
 
     records = []
+    r_norm_history = []
 
     resolved_frames_dir, resolved_gif_path = _resolve_window_visual_paths(
         plot_windows=plot_windows,
@@ -167,7 +180,18 @@ def run_experiment_sliding(
         os.makedirs(resolved_frames_dir, exist_ok=True)
 
     max_sensor_speed = float(np.max(np.hypot(u, v)))
-    print("max speed:", max_sensor_speed)
+
+    full_state_matrix = flatten_state(u, v)
+    dx = experiment_config.domain.lx / nx
+    dy = experiment_config.domain.ly / ny
+    max_flow_speed = max_sensor_speed)
+    cfl_advect = max_flow_speed * dt / min(dx, dy)
+    print("max speed:", max_flow_speed)
+    print(
+        "advection CFL:",
+        cfl_advect,
+        f"(max_flow_speed={max_flow_speed}, dx={dx}, dy={dy}, dt={dt})",
+    )
 
     fixed_nodes = coords_to_linear_index(
         fixed_sensor_positions,
@@ -183,9 +207,11 @@ def run_experiment_sliding(
             lagrangian_history.append(lagrangian_sensor_positions.copy())
             moving_history.append(moving_pod_qr_sensor_positions.copy())
 
-        # Match established behavior: fit POD/QR on [start_idx, end_idx-1) and score at end_idx-1.
+        # Fit POD/QR on the current window; keep midpoint diagnostics, but score using the
+        # mean reconstruction RMSE across every frame in the fitted window.
+        t_eval = (start_idx + (end_idx - 1)) // 2
         window_state_matrix = flatten_state(u[start_idx : end_idx - 1], v[start_idx : end_idx - 1])
-        latest_state_matrix = flatten_state(u[end_idx - 1 : end_idx], v[end_idx - 1 : end_idx])
+        window_frame_indices = range(start_idx, end_idx - 1)
 
         window_sspor_model = fit_sspor_model(
             window_state_matrix,
@@ -196,6 +222,14 @@ def run_experiment_sliding(
 
         window_qr_nodes = selected_nodes_from_uv(window_sspor_model.selected_sensors, nx, ny)
         window_basis_matrix = window_sspor_model.basis_matrix_
+
+        x_t = _state_at_t(full_state_matrix, t_eval, total_steps)
+        Psi = np.asarray(window_basis_matrix, dtype=float)
+
+        a_proj, *_ = np.linalg.lstsq(Psi, x_t, rcond=None)
+        r_vec = x_t - Psi @ a_proj
+        r_norm = float(np.linalg.norm(r_vec))
+        r_norm_history.append(r_norm)
 
         window_qr_index_pairs = np.column_stack(np.unravel_index(window_qr_nodes, (nx, ny)))
         window_qr_target_positions = grid_to_phys(
@@ -213,6 +247,27 @@ def run_experiment_sliding(
             experiment_config.domain.lx,
             experiment_config.domain.ly,
         )
+        
+
+        # TODO: think about moving this back, right now, im moving it before we compute error
+        moving_next_positions = advect_hungarian(
+            curr_pts=moving_pod_qr_sensor_positions,
+            opt_pts=window_qr_target_positions,
+            lx=experiment_config.domain.lx,
+            ly=experiment_config.domain.ly,
+            v_max=max_sensor_speed,
+            dt=dt,
+            periodic=periodic,
+        )
+
+        # moving_pod_qr_sensor_positions = bounce_apart(
+        #     moving_pod_qr_sensor_positions,
+        #     min_dist_pct * experiment_config.domain.lx,
+        #     experiment_config.domain.lx,
+        #     experiment_config.domain.ly,
+        # )
+
+        moving_pod_qr_sensor_positions = moving_next_positions
         moving_pod_qr_nodes = coords_to_linear_index(
             moving_pod_qr_sensor_positions,
             nx,
@@ -229,15 +284,32 @@ def run_experiment_sliding(
         }
 
         for placement_name, placement_node_idx in placement_nodes.items():
+            # # Average over whole window:
+            # rmse_samples = [
+            #     rmse_with_basis_matrix(
+            #         full_state_matrix,
+            #         t_idx=frame_idx,
+            #         node_idx=placement_node_idx,
+            #         basis_matrix=window_basis_matrix,
+            #         grid_n=grid_n,
+            #         nx=nx,
+            #         ny=ny,
+            #     )
+            #     for frame_idx in window_frame_indices
+            # ]
+            # rmse_value = float(np.mean(rmse_samples))
+
+            # Midpoint only evaluation:
             rmse_value = rmse_with_basis_matrix(
-                latest_state_matrix,
-                t_idx=0,
+                full_state_matrix,
+                t_idx=t_eval,
                 node_idx=placement_node_idx,
                 basis_matrix=window_basis_matrix,
                 grid_n=grid_n,
                 nx=nx,
                 ny=ny,
             )
+
             records.append(
                 {
                     "window": window_idx,
@@ -247,13 +319,11 @@ def run_experiment_sliding(
                 }
             )
 
-        # Midpoint index is used for visualization only.
-        t_mid = (start_idx + (end_idx - 1)) // 2
         if plot_windows and resolved_frames_dir is not None:
             out_png = os.path.join(resolved_frames_dir, f"frame_{window_idx:04d}.png")
             save_window_frame(
-                u_grid=u[t_mid],
-                v_grid=v[t_mid],
+                u_grid=u[t_eval],
+                v_grid=v[t_eval],
                 lx=experiment_config.domain.lx,
                 ly=experiment_config.domain.ly,
                 fixed_sensor_positions=fixed_sensor_positions,
@@ -263,16 +333,19 @@ def run_experiment_sliding(
                 window_idx=window_idx,
                 start_idx=start_idx,
                 end_idx=end_idx,
-                t_mid=t_mid,
+                t_mid=t_eval,
                 out_path=out_png,
+                rmse_records=records,
+                r_norm_history=r_norm_history,
+                total_windows=total_windows,
                 quiver_step=experiment_config.quiver_step,
             )
 
-        # Match established movement update timing at end_idx-2 snapshot.
+        # Match random_trials movement timing at the midpoint snapshot.
         lagrangian_sensor_positions = advect(
             lagrangian_sensor_positions,
-            u[end_idx - 2],
-            v[end_idx - 2],
+            u[t_eval],
+            v[t_eval],
             experiment_config.domain.lx,
             experiment_config.domain.ly,
             dt=dt,
@@ -284,34 +357,33 @@ def run_experiment_sliding(
             experiment_config.domain.lx,
             experiment_config.domain.ly,
         )
-
+        
         moving_flow_vectors = _sample_flow_vectors(
             moving_pod_qr_sensor_positions,
-            u[end_idx - 2],
-            v[end_idx - 2],
+            u[t_eval],
+            v[t_eval],
             experiment_config.domain.lx,
             experiment_config.domain.ly,
         )
 
-        moving_next_positions = advect_hungarian(
-            curr_pts=moving_pod_qr_sensor_positions,
-            opt_pts=window_qr_target_positions,
-            lx=experiment_config.domain.lx,
-            ly=experiment_config.domain.ly,
-            v_max=max_sensor_speed,
-            dt=dt,
-            periodic=periodic,
-        )
+
 
         moving_heading_velocity = (moving_next_positions - moving_pod_qr_sensor_positions) / dt
         if return_paths:
             moving_heading_history.append(moving_heading_velocity.copy())
             moving_flow_history.append(moving_flow_vectors.copy())
 
-        moving_pod_qr_sensor_positions = moving_next_positions
 
     if make_gif and resolved_frames_dir is not None and resolved_gif_path is not None:
         make_window_gif(resolved_frames_dir, resolved_gif_path, duration=gif_duration)
+
+    if r_norm_history:
+        r_norm_array = np.asarray(r_norm_history, dtype=float)
+        print(
+            "\nr_norm summary: "
+            f"mean={r_norm_array.mean():.6e} "
+            f"variance={r_norm_array.var(ddof=0):.6e}"
+        )
 
     results = pd.DataFrame(records)
 

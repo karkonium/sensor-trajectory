@@ -12,7 +12,7 @@ from experiments.sliding.pipeline import run_experiment_sliding
 
 TOTAL_STEPS = 160
 PERIOD = 80
-FLOW_NAMES = ["double_gyre", "moving_vortex", "kolmogorov", "cylinder_wake"]
+FLOW_NAMES = ["kolmogorov"]  # ["double_gyre", "moving_vortex", "kolmogorov", "cylinder_wake"]
 
 NUM_SENSORS = 10
 MAX_BASIS_DIM = 10
@@ -32,6 +32,21 @@ SAVE_RAW_CSV = True
 SAVE_AGGREGATED_CSV = True
 RAW_CSV_NAME = "raw_window_records.csv"
 AGGREGATED_CSV_NAME = "aggregated_mean_rmse.csv"
+
+
+def _hyperparams_dict():
+    """Return the sliding experiment hyperparameters."""
+    return {
+        "total_steps": TOTAL_STEPS,
+        "period": PERIOD,
+        "flow_names": FLOW_NAMES,
+        "num_sensors": NUM_SENSORS,
+        "max_basis_dim": MAX_BASIS_DIM,
+        "seed": SEED,
+        "window_len": WINDOW_LEN,
+        "step_size": STEP_SIZE,
+        "min_dist_pct": MIN_DIST_PCT,
+    }
 
 
 def _run_single_flow(flow_case, artifact_paths):
@@ -97,6 +112,9 @@ def main():
     Returns:
         None.
     """
+    print("\n=== Sliding Hyperparameters ===")
+    print(_hyperparams_dict())
+
     artifact_paths = build_artifact_paths("sliding", include_frames=True)
     ensure_artifact_dirs(artifact_paths)
 
@@ -116,15 +134,16 @@ def main():
     if SAVE_RAW_CSV:
         raw_csv_path = Path(artifact_paths.results_dir) / RAW_CSV_NAME
         combined_df.to_csv(raw_csv_path, index=False)
-        print(f"Saved raw records to {raw_csv_path}")
 
     if SAVE_AGGREGATED_CSV:
-        aggregated_df = (
-            combined_df.groupby(["flow", "placement", "basis"], as_index=False)["RMSE"].mean()
+        aggregated_df = combined_df.groupby(["flow", "placement", "basis"], as_index=False).agg(
+            RMSE=("RMSE", "mean"),
+            RMSE_variance=("RMSE", lambda s: float(s.var(ddof=0))),
         )
         aggregated_csv_path = Path(artifact_paths.results_dir) / AGGREGATED_CSV_NAME
         aggregated_df.to_csv(aggregated_csv_path, index=False)
-        print(f"Saved aggregated records to {aggregated_csv_path}")
+        print("\nAggregated RMSE summary:")
+        print(aggregated_df.to_string(index=False))
 
 
 if __name__ == "__main__":
