@@ -5,6 +5,7 @@ import os
 import numpy as np
 import pandas as pd
 from scipy.interpolate import RegularGridInterpolator
+from scipy.linalg import svdvals
 from tqdm.auto import tqdm
 
 from experiments.common.config import config_from_arrays
@@ -13,7 +14,8 @@ from experiments.common.spatial_utils import coords_to_linear_index, grid_to_phy
 from experiments.common.state_reconstruction import (
     flatten_state,
     fit_sspor_model,
-    rmse_with_basis_matrix,
+    l2h_norm,
+    relative_l2h_error_with_basis_matrix,
     selected_nodes_from_uv,
 )
 from experiments.common.windowing import get_sliding_intervals
@@ -85,6 +87,20 @@ def _state_at_t(full_state_matrix, t_idx, total_steps):
     )
 
 
+def _cumulative_variance_from_direct_svd(state_matrix, basis_rank):
+    """Compute cumulative captured energy from an independent SVD-based check."""
+    if basis_rank <= 0:
+        return 0.0
+
+    temporal_gram = np.asarray(state_matrix, dtype=float) @ np.asarray(state_matrix, dtype=float).T
+    singular_values_sq = np.sort(svdvals(temporal_gram))[::-1]
+    total_energy = float(np.sum(singular_values_sq))
+    if total_energy <= 0.0:
+        return 0.0
+
+    return float(np.sum(singular_values_sq[:basis_rank]) / total_energy)
+
+
 def run_experiment_sliding(
     u,
     v,
@@ -126,7 +142,7 @@ def run_experiment_sliding(
         show_progress: Whether to show tqdm progress.
 
     Returns:
-        DataFrame of RMSE records, or tuple with path histories when return_paths=True.
+        DataFrame of L2_h records, or tuple with path histories when return_paths=True.
     """
     if u.shape != v.shape:
         raise ValueError("u and v must have identical shape (T, nx, ny)")
@@ -166,6 +182,8 @@ def run_experiment_sliding(
 
     records = []
     r_norm_history = []
+    variance_captured_attr_history = []
+    variance_captured_svd_history = []
 
     resolved_frames_dir, resolved_gif_path = _resolve_window_visual_paths(
         plot_windows=plot_windows,
@@ -207,11 +225,10 @@ def run_experiment_sliding(
             lagrangian_history.append(lagrangian_sensor_positions.copy())
             moving_history.append(moving_pod_qr_sensor_positions.copy())
 
-        # Fit POD/QR on the current window; keep midpoint diagnostics, but score using the
-        # mean reconstruction RMSE across every frame in the fitted window.
+        # Fit POD/QR on the current window; keep midpoint diagnostics while
+        # scoring relative L2_h error at the midpoint snapshot.
         t_eval = (start_idx + (end_idx - 1)) // 2
         window_state_matrix = flatten_state(u[start_idx : end_idx - 1], v[start_idx : end_idx - 1])
-        window_frame_indices = range(start_idx, end_idx - 1)
 
         window_sspor_model = fit_sspor_model(
             window_state_matrix,
@@ -222,13 +239,23 @@ def run_experiment_sliding(
 
         window_qr_nodes = selected_nodes_from_uv(window_sspor_model.selected_sensors, nx, ny)
         window_basis_matrix = window_sspor_model.basis_matrix_
+        basis_rank = int(window_basis_matrix.shape[1])
+        explained_variance_ratio = np.asarray(
+            window_sspor_model.basis.explained_variance_ratio_,
+            dtype=float,
+        )
+        variance_captured_attr_history.append(float(np.sum(explained_variance_ratio)))
+        variance_captured_svd_history.append(
+            _cumulative_variance_from_direct_svd(window_state_matrix, basis_rank)
+        )
 
         x_t = _state_at_t(full_state_matrix, t_eval, total_steps)
         Psi = np.asarray(window_basis_matrix, dtype=float)
 
         a_proj, *_ = np.linalg.lstsq(Psi, x_t, rcond=None)
         r_vec = x_t - Psi @ a_proj
-        r_norm = float(np.linalg.norm(r_vec))
+        x_t_norm = l2h_norm(x_t, dx, dy)
+        r_norm = l2h_norm(r_vec, dx, dy) / x_t_norm if x_t_norm > 0.0 else 0.0
         r_norm_history.append(r_norm)
 
         window_qr_index_pairs = np.column_stack(np.unravel_index(window_qr_nodes, (nx, ny)))
@@ -285,29 +312,29 @@ def run_experiment_sliding(
 
         for placement_name, placement_node_idx in placement_nodes.items():
             # # Average over whole window:
-            # rmse_samples = [
-            #     rmse_with_basis_matrix(
+            # l2h_samples = [
+            #     relative_l2h_error_with_basis_matrix(
             #         full_state_matrix,
             #         t_idx=frame_idx,
             #         node_idx=placement_node_idx,
             #         basis_matrix=window_basis_matrix,
             #         grid_n=grid_n,
-            #         nx=nx,
-            #         ny=ny,
+            #         dx=dx,
+            #         dy=dy,
             #     )
-            #     for frame_idx in window_frame_indices
+            #     for frame_idx in range(start_idx, end_idx - 1)
             # ]
-            # rmse_value = float(np.mean(rmse_samples))
+            # l2h_value = float(np.mean(l2h_samples))
 
             # Midpoint only evaluation:
-            rmse_value = rmse_with_basis_matrix(
+            l2h_value = relative_l2h_error_with_basis_matrix(
                 full_state_matrix,
                 t_idx=t_eval,
                 node_idx=placement_node_idx,
                 basis_matrix=window_basis_matrix,
                 grid_n=grid_n,
-                nx=nx,
-                ny=ny,
+                dx=dx,
+                dy=dy,
             )
 
             records.append(
@@ -315,7 +342,7 @@ def run_experiment_sliding(
                     "window": window_idx,
                     "placement": placement_name,
                     "basis": "Window POD",
-                    "RMSE": float(rmse_value),
+                    "L2_h": float(l2h_value),
                 }
             )
 
@@ -335,7 +362,7 @@ def run_experiment_sliding(
                 end_idx=end_idx,
                 t_mid=t_eval,
                 out_path=out_png,
-                rmse_records=records,
+                l2h_records=records,
                 r_norm_history=r_norm_history,
                 total_windows=total_windows,
                 quiver_step=experiment_config.quiver_step,
@@ -380,9 +407,25 @@ def run_experiment_sliding(
     if r_norm_history:
         r_norm_array = np.asarray(r_norm_history, dtype=float)
         print(
-            "\nr_norm summary: "
+            "\nrelative r_norm summary (L2_h): "
             f"mean={r_norm_array.mean():.6e} "
             f"variance={r_norm_array.var(ddof=0):.6e}"
+        )
+
+    if variance_captured_attr_history:
+        variance_captured_attr_array = np.asarray(variance_captured_attr_history, dtype=float)
+        print(
+            "cumulative variance captured summary (basis attr): "
+            f"mean={variance_captured_attr_array.mean():.6e} "
+            f"variance={variance_captured_attr_array.var(ddof=0):.6e}"
+        )
+
+    if variance_captured_svd_history:
+        variance_captured_svd_array = np.asarray(variance_captured_svd_history, dtype=float)
+        print(
+            "cumulative variance captured summary (direct SVD): "
+            f"mean={variance_captured_svd_array.mean():.6e} "
+            f"variance={variance_captured_svd_array.var(ddof=0):.6e}"
         )
 
     results = pd.DataFrame(records)

@@ -16,27 +16,27 @@ PLACEMENT_COLORS = {
 }
 
 
-def _plot_rmse_history(axis, rmse_records, total_windows, r_norm_history=None):
-    """Plot RMSE history and optional residual norm history with a fixed x-axis."""
+def _plot_l2h_history(axis, l2h_records, total_windows, r_norm_history=None):
+    """Plot relative L2_h error history and optional residual norm history."""
     if total_windows is None or total_windows <= 0:
         axis.set_xlim(0, 1)
         axis.set_xlabel("window")
-        axis.set_ylabel("Error")
-        axis.set_title("Sensor Error Over Window")
+        axis.set_ylabel("Relative L2_h Error")
+        axis.set_title("Relative Sensor Error Over Window")
         axis.grid(True, which="both", alpha=0.25)
         return
 
-    rmse_records = rmse_records or []
+    l2h_records = l2h_records or []
     basis_names = {
         str(record.get("basis", "")).strip()
-        for record in rmse_records
+        for record in l2h_records
         if str(record.get("basis", "")).strip()
     }
     show_basis = len(basis_names) > 1
 
     labels = []
     series_by_label = {}
-    for record in rmse_records:
+    for record in l2h_records:
         placement_name = str(record["placement"]).strip()
         basis_name = str(record.get("basis", "")).strip()
         label = f"{placement_name} - {basis_name}" if show_basis and basis_name else placement_name
@@ -47,7 +47,7 @@ def _plot_rmse_history(axis, rmse_records, total_windows, r_norm_history=None):
 
         window_idx = int(record["window"])
         if 0 <= window_idx < total_windows:
-            series_by_label[label][window_idx] = float(record["RMSE"])
+            series_by_label[label][window_idx] = float(record["L2_h"])
 
     window_axis = np.arange(int(total_windows))
     for label in labels:
@@ -76,14 +76,14 @@ def _plot_rmse_history(axis, rmse_records, total_windows, r_norm_history=None):
             linewidth=1.8,
             marker="^",
             markersize=3.5,
-            label="Window ||r||",
+            label="Window relative ||r||_h",
         )
 
     axis.set_xlim(0, max(int(total_windows) - 1, 1))
     axis.set_yscale("log")
     axis.set_xlabel("window")
-    axis.set_ylabel("Error")
-    axis.set_title("Sensor Error + Window ||r||")
+    axis.set_ylabel("Relative L2_h Error")
+    axis.set_title("Relative Sensor Error + Window ||r||_h")
     axis.grid(True, which="both", alpha=0.25)
     axis.legend(loc="upper right", fontsize=8)
 
@@ -102,7 +102,7 @@ def save_window_frame(
     end_idx,
     t_mid,
     out_path,
-    rmse_records=None,
+    l2h_records=None,
     r_norm_history=None,
     total_windows=None,
     quiver_step=4,
@@ -124,7 +124,7 @@ def save_window_frame(
         end_idx: Window end index.
         t_mid: Midpoint index used for quiver snapshot.
         out_path: Output PNG path.
-        rmse_records: Running RMSE records collected up to the current window.
+        l2h_records: Running L2_h records collected up to the current window.
         r_norm_history: Running residual norms (one value per window).
         total_windows: Total number of windows in the full run.
         quiver_step: Quiver decimation step.
@@ -139,7 +139,7 @@ def save_window_frame(
     y_coords = np.linspace(0.0, ly, ny)
     x_grid, y_grid = np.meshgrid(x_coords, y_coords, indexing="ij")
 
-    fig, (flow_axis, rmse_axis) = plt.subplots(1, 2, figsize=(13.4, 5.6), constrained_layout=True)
+    fig, (flow_axis, l2h_axis) = plt.subplots(1, 2, figsize=(13.4, 5.6), constrained_layout=True)
 
     flow_axis.quiver(
         x_grid[::quiver_step, ::quiver_step],
@@ -194,9 +194,9 @@ def save_window_frame(
     flow_axis.set_title(f"Window {window_idx}  t in [{start_idx},{end_idx})  mid={t_mid}")
     flow_axis.legend(loc="upper right")
 
-    _plot_rmse_history(
-        rmse_axis,
-        rmse_records=rmse_records,
+    _plot_l2h_history(
+        l2h_axis,
+        l2h_records=l2h_records,
         total_windows=total_windows,
         r_norm_history=r_norm_history,
     )

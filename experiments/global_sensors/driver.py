@@ -7,7 +7,7 @@ import pandas as pd
 from experiments.common.config import ExperimentConfig
 from experiments.common.flow_cases import generate_standard_flow_cases
 from experiments.common.paths import build_artifact_paths, ensure_artifact_dirs
-from experiments.common.plotting import save_grouped_barh_by_flow, save_mean_rmse_vs_sensor_count
+from experiments.common.plotting import save_grouped_barh_by_flow, save_mean_l2h_vs_sensor_count
 from experiments.global_sensors.pipeline import run_pod_basis_comparison
 
 
@@ -15,7 +15,7 @@ TOTAL_STEPS = 160
 PERIOD = 80
 FLOW_NAMES = ["double_gyre", "moving_vortex", "kolmogorov", "cylinder_wake"]
 
-SENSOR_COUNTS = [1, 2, 4, 8, 16]
+SENSOR_COUNTS = [1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16]
 MAX_BASIS_DIM = 10
 SEED = 90
 
@@ -25,7 +25,7 @@ MIN_DIST_PCT = 0.05
 SHOW_PROGRESS = True
 
 RAW_CSV_NAME = "raw_window_records.csv"
-AGGREGATED_CSV_NAME = "aggregated_mean_rmse.csv"
+AGGREGATED_CSV_NAME = "aggregated_mean_l2h.csv"
 
 METHOD_ORDER = ["Static QR", "Teleport QR", "Lagrangian", "Moving QR"]
 BASIS_ORDER = ["Global POD", "Window POD"]
@@ -39,7 +39,7 @@ def _run_single_sensor_count(flow_case, num_sensors):
         num_sensors: Number of sensors for this run.
 
     Returns:
-        DataFrame with per-window comparison records.
+        DataFrame with per-window relative L2_h comparison records.
     """
     experiment_config = ExperimentConfig(
         domain=flow_case.domain_config,
@@ -95,7 +95,7 @@ def main():
             all_records.append(sensor_records)
 
     raw_df = pd.concat(all_records, ignore_index=True)
-    aggregated_df = raw_df.groupby(["flow", "num_sensors", "basis", "method"], as_index=False)["RMSE"].mean()
+    aggregated_df = raw_df.groupby(["flow", "num_sensors", "basis", "method"], as_index=False)["L2_h"].mean()
 
     raw_csv_path = Path(artifact_paths.results_dir) / RAW_CSV_NAME
     aggregated_csv_path = Path(artifact_paths.results_dir) / AGGREGATED_CSV_NAME
@@ -106,7 +106,7 @@ def main():
     print(f"Saved raw records to {raw_csv_path}")
     print(f"Saved aggregated records to {aggregated_csv_path}")
 
-    save_mean_rmse_vs_sensor_count(aggregated_df, artifact_paths.plots_dir)
+    save_mean_l2h_vs_sensor_count(aggregated_df, artifact_paths.plots_dir)
     save_grouped_barh_by_flow(
         aggregated_df,
         artifact_paths.plots_dir,

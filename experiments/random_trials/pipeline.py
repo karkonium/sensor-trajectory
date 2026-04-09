@@ -10,7 +10,7 @@ from experiments.common.spatial_utils import coords_to_linear_index, grid_to_phy
 from experiments.common.state_reconstruction import (
     fit_sspor_model,
     flatten_state,
-    rmse_with_basis_matrix,
+    relative_l2h_error_with_basis_matrix,
     selected_nodes_from_uv,
 )
 from experiments.common.windowing import get_sliding_intervals
@@ -67,7 +67,7 @@ def run_random_trials_window_pod(
         flow: Optional flow label attached to output records.
 
     Returns:
-        DataFrame with columns flow, num_sensors, trial, window, t, placement, RMSE.
+        DataFrame with columns flow, num_sensors, trial, window, t, placement, L2_h.
     """
     if u.shape != v.shape:
         raise ValueError("u and v must have identical shape (T, nx, ny)")
@@ -94,6 +94,8 @@ def run_random_trials_window_pod(
         raise ValueError("No sliding intervals produced; adjust window_len or step_size")
 
     full_state_matrix = flatten_state(u, v)
+    dx = experiment_config.domain.lx / nx
+    dy = experiment_config.domain.ly / ny
     max_sensor_speed = float(np.max(np.hypot(u, v)))
 
     rng = np.random.default_rng(seed)
@@ -165,14 +167,14 @@ def run_random_trials_window_pod(
             }
 
             for placement_name, placement_node_idx in placement_nodes.items():
-                rmse_value = rmse_with_basis_matrix(
+                l2h_value = relative_l2h_error_with_basis_matrix(
                     full_state_matrix,
                     t_idx=t_eval,
                     node_idx=placement_node_idx,
                     basis_matrix=window_basis_matrix,
                     grid_n=grid_n,
-                    nx=nx,
-                    ny=ny,
+                    dx=dx,
+                    dy=dy,
                 )
                 records.append(
                     {
@@ -182,7 +184,7 @@ def run_random_trials_window_pod(
                         "window": window_idx,
                         "t": t_eval,
                         "placement": placement_name,
-                        "RMSE": float(rmse_value),
+                        "L2_h": float(l2h_value),
                     }
                 )
 

@@ -13,7 +13,7 @@ from experiments.random_trials.pipeline import run_random_trials_window_pod
 
 TOTAL_STEPS = 160
 PERIOD = 80
-FLOW_NAMES = ["double_gyre", "moving_vortex", "kolmogorov", "cylinder_wake"]
+FLOW_NAMES = ['kolmogorov']# ["double_gyre", "moving_vortex", "kolmogorov", "cylinder_wake"]
 
 NUM_SENSORS = 10
 N_TRIALS = 50
@@ -26,7 +26,7 @@ MIN_DIST_PCT = 0.05
 SHOW_PROGRESS = True
 
 RAW_CSV_NAME = "raw_window_records.csv"
-AGGREGATED_CSV_NAME = "aggregated_mean_rmse.csv"
+AGGREGATED_CSV_NAME = "aggregated_mean_l2h.csv"
 
 PLACEMENT_ORDER = ["Fixed", "Lagrangian", "Moving POD-QR", "QR teleport"]
 
@@ -38,7 +38,7 @@ def _run_single_flow(flow_case):
         flow_case: FlowCasePayload from generate_standard_flow_cases.
 
     Returns:
-        DataFrame with per-window, per-trial RMSE records.
+        DataFrame with per-window, per-trial relative L2_h records.
     """
     experiment_config = ExperimentConfig(
         domain=flow_case.domain_config,
@@ -93,7 +93,7 @@ def main():
         all_records.append(flow_records)
 
     raw_df = pd.concat(all_records, ignore_index=True)
-    aggregated_df = raw_df.groupby(["flow", "num_sensors", "placement"], as_index=False)["RMSE"].mean()
+    aggregated_df = raw_df.groupby(["flow", "num_sensors", "placement"], as_index=False)["L2_h"].mean()
 
     raw_csv_path = Path(artifact_paths.results_dir) / RAW_CSV_NAME
     aggregated_csv_path = Path(artifact_paths.results_dir) / AGGREGATED_CSV_NAME

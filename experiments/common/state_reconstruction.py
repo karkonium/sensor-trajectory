@@ -74,6 +74,7 @@ def fit_pod_basis(state_matrix, max_basis_dim, seed):
         Basis matrix from fitted POD model.
     """
     basis_dim = _safe_basis_dim(state_matrix, max_basis_dim)
+    print("Effective basis dimension for ARPACK SVD:", basis_dim)
     pod_basis = ps.basis.SVD(
         n_basis_modes=basis_dim,
         algorithm="arpack",
@@ -134,6 +135,49 @@ def measurement_indices_uv(node_idx, grid_n):
     node_idx = np.asarray(node_idx, dtype=int)
     node_idx = np.unique(np.clip(node_idx, 0, grid_n - 1))
     return expand_to_uv(node_idx, grid_n)
+
+
+def l2h_norm(state_vector, dx, dy):
+    """Compute the discrete L2_h norm for a flattened [u, v] state."""
+    return float(np.sqrt(dx * dy) * np.linalg.norm(np.asarray(state_vector, dtype=float).ravel()))
+
+
+def relative_l2h_error_with_basis_matrix(full_state_matrix, t_idx, node_idx, basis_matrix, grid_n, dx, dy):
+    """Reconstruct one state at a time index and score relative L2_h error.
+
+    Args:
+        full_state_matrix: Full state matrix shaped (T, 2 * grid_n).
+        t_idx: Time index to evaluate.
+        node_idx: Scalar-node sensor indices.
+        basis_matrix: Basis matrix shaped (2*grid_n, r) or transposed.
+        grid_n: Number of scalar nodes per velocity component.
+        dx: Grid spacing in x.
+        dy: Grid spacing in y.
+
+    Returns:
+        Scalar relative L2_h reconstruction error.
+    """
+    sensor_indices_uv = measurement_indices_uv(node_idx, grid_n)
+
+    true_state = np.asarray(full_state_matrix[t_idx : t_idx + 1], dtype=float)
+    sampled_state = true_state[:, sensor_indices_uv]
+
+    basis_matrix_use = np.asarray(basis_matrix, dtype=float)
+    if basis_matrix_use.shape[0] != 2 * grid_n and basis_matrix_use.shape[1] == 2 * grid_n:
+        basis_matrix_use = basis_matrix_use.T
+    if basis_matrix_use.shape[0] != 2 * grid_n:
+        raise ValueError(
+            f"basis_matrix has unexpected shape {basis_matrix.shape}; "
+            f"expected (2*grid_n, r) or (r, 2*grid_n)"
+        )
+
+    sampled_basis = basis_matrix_use[sensor_indices_uv, :]
+    sampled_basis_pinv = np.linalg.pinv(sampled_basis)
+    reconstructed_state = (sampled_state @ sampled_basis_pinv.T) @ basis_matrix_use.T
+
+    error_norm = l2h_norm(true_state - reconstructed_state, dx, dy)
+    true_norm = l2h_norm(true_state, dx, dy)
+    return error_norm / true_norm if true_norm > 0.0 else 0.0
 
 
 def rmse_with_basis_matrix(full_state_matrix, t_idx, node_idx, basis_matrix, grid_n, nx, ny):

@@ -10,9 +10,9 @@ from experiments.common.paths import build_artifact_paths, ensure_artifact_dirs
 from experiments.sliding.pipeline import run_experiment_sliding
 
 
-TOTAL_STEPS = 160
+TOTAL_STEPS = 200
 PERIOD = 80
-FLOW_NAMES = ["kolmogorov"]  # ["double_gyre", "moving_vortex", "kolmogorov", "cylinder_wake"]
+FLOW_NAMES = ["double_gyre", "moving_vortex", "kolmogorov", "cylinder_wake"]
 
 NUM_SENSORS = 10
 MAX_BASIS_DIM = 10
@@ -31,7 +31,7 @@ GIF_DURATION = 0.10
 SAVE_RAW_CSV = True
 SAVE_AGGREGATED_CSV = True
 RAW_CSV_NAME = "raw_window_records.csv"
-AGGREGATED_CSV_NAME = "aggregated_mean_rmse.csv"
+AGGREGATED_CSV_NAME = "aggregated_mean_l2h.csv"
 
 
 def _hyperparams_dict():
@@ -57,7 +57,7 @@ def _run_single_flow(flow_case, artifact_paths):
         artifact_paths: ArtifactPaths for sliding outputs.
 
     Returns:
-        DataFrame with per-window RMSE records for one flow.
+        DataFrame with per-window L2_h records for one flow.
     """
     experiment_config = ExperimentConfig(
         domain=flow_case.domain_config,
@@ -137,12 +137,12 @@ def main():
 
     if SAVE_AGGREGATED_CSV:
         aggregated_df = combined_df.groupby(["flow", "placement", "basis"], as_index=False).agg(
-            RMSE=("RMSE", "mean"),
-            RMSE_variance=("RMSE", lambda s: float(s.var(ddof=0))),
+            L2_h=("L2_h", "mean"),
+            L2_h_variance=("L2_h", lambda s: float(s.var(ddof=0))),
         )
         aggregated_csv_path = Path(artifact_paths.results_dir) / AGGREGATED_CSV_NAME
         aggregated_df.to_csv(aggregated_csv_path, index=False)
-        print("\nAggregated RMSE summary:")
+        print("\nAggregated relative L2_h error summary:")
         print(aggregated_df.to_string(index=False))
 
 

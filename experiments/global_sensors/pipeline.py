@@ -11,7 +11,7 @@ from experiments.common.state_reconstruction import (
     fit_pod_basis,
     fit_sspor_model,
     flatten_state,
-    rmse_with_basis_matrix,
+    relative_l2h_error_with_basis_matrix,
     selected_nodes_from_uv,
 )
 from experiments.common.windowing import get_sliding_intervals
@@ -44,7 +44,7 @@ def run_pod_basis_comparison(
         flow: Optional flow label stored in output records.
 
     Returns:
-        DataFrame with columns flow, num_sensors, window, t, basis, method, RMSE.
+        DataFrame with columns flow, num_sensors, window, t, basis, method, L2_h.
     """
     if u.shape != v.shape:
         raise ValueError("u and v must have identical shape (T, nx, ny)")
@@ -69,6 +69,8 @@ def run_pod_basis_comparison(
         raise ValueError("No sliding intervals produced; adjust window_len or step_size")
 
     full_state_matrix = flatten_state(u, v)
+    dx = experiment_config.domain.lx / nx
+    dy = experiment_config.domain.ly / ny
 
     global_basis_matrix = fit_pod_basis(
         full_state_matrix,
@@ -142,14 +144,14 @@ def run_pod_basis_comparison(
         }
 
         for method_name, method_node_idx in method_nodes.items():
-            global_rmse = rmse_with_basis_matrix(
+            global_l2h = relative_l2h_error_with_basis_matrix(
                 full_state_matrix,
                 t_idx=t_eval,
                 node_idx=method_node_idx,
                 basis_matrix=global_basis_matrix,
                 grid_n=grid_n,
-                nx=nx,
-                ny=ny,
+                dx=dx,
+                dy=dy,
             )
             records.append(
                 {
@@ -157,20 +159,20 @@ def run_pod_basis_comparison(
                     "t": t_eval,
                     "basis": "Global POD",
                     "method": method_name,
-                    "RMSE": float(global_rmse),
+                    "L2_h": float(global_l2h),
                     "flow": flow,
                     "num_sensors": experiment_config.num_sensors,
                 }
             )
 
-            window_rmse = rmse_with_basis_matrix(
+            window_l2h = relative_l2h_error_with_basis_matrix(
                 full_state_matrix,
                 t_idx=t_eval,
                 node_idx=method_node_idx,
                 basis_matrix=window_basis_matrix,
                 grid_n=grid_n,
-                nx=nx,
-                ny=ny,
+                dx=dx,
+                dy=dy,
             )
             records.append(
                 {
@@ -178,7 +180,7 @@ def run_pod_basis_comparison(
                     "t": t_eval,
                     "basis": "Window POD",
                     "method": method_name,
-                    "RMSE": float(window_rmse),
+                    "L2_h": float(window_l2h),
                     "flow": flow,
                     "num_sensors": experiment_config.num_sensors,
                 }
