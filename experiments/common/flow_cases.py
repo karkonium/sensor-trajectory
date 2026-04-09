@@ -79,7 +79,7 @@ def _generate_double_gyre_case(total_steps, period):
     Returns:
         FlowCasePayload for double gyre.
     """
-    nx, ny = 600, 300
+    nx, ny = 400, 200
     lx, ly = 2.0, 1.0
     u, v = generate_double_gyre_flow(
         total_steps,
@@ -111,7 +111,7 @@ def _generate_moving_vortex_case(total_steps, period):
     Returns:
         FlowCasePayload for moving vortex.
     """
-    nx, ny = 600, 600
+    nx, ny = 300, 300
     lx, ly = 1.0, 1.0
     u, v = generate_moving_vortex(total_steps, nx, ny, lx, ly, period=period)
     return FlowCasePayload(
@@ -152,7 +152,7 @@ def _generate_kolmogorov_case(total_steps):
         u_raw,
         v_raw,
         total_steps=total_steps,
-        start_idx=1100,
+        start_idx=1799,
         end_idx=1999,
         original_dt=stored_snapshot_dt,
     )
