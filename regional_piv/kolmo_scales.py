@@ -12,6 +12,16 @@ import matplotlib.pyplot as plt
 
 from data_generation import generate_cfd_kolmogorov_flow
 from plotting import load_pickles
+from plot_style import (
+    FLUID_LINE_COLOR,
+    INFO_LINE_COLOR,
+    REFERENCE_LINE_COLOR,
+    SINGLE_PANEL_FIGSIZE,
+    apply_axis_style,
+    finalize_legend,
+    presentation_plot_context,
+    set_panel_title,
+)
 
 
 
@@ -342,53 +352,52 @@ def plot_fluid_spectrum(
     k_plot = k[m]
     Ek_plot = Ek[m]
 
-    fig, ax = plt.subplots(figsize=(7.5, 5.8), constrained_layout=True)
-    ax.loglog(k_plot, Ek_plot, label="Fluid (time-avg)")
+    with presentation_plot_context():
+        fig, ax = plt.subplots(figsize=SINGLE_PANEL_FIGSIZE, constrained_layout=True)
+        ax.loglog(k_plot, Ek_plot, color=FLUID_LINE_COLOR, label="Fluid (time-avg)")
 
-    ax.set_xlabel("wavenumber $k$ (rad / length)")
-    ax.set_ylabel("$E(k)$ (energy density per unit $k$)")
-    ax.set_title(title)
+        ax.set_xlabel("wavenumber $k$ (rad / length)")
+        ax.set_ylabel("$E(k)$ (energy density per unit $k$)")
+        set_panel_title(ax, title)
+        apply_axis_style(ax, x_grid=True, y_grid=True)
 
-    # Mark forcing scale (helps interpret 2D cascades: -5/3 typically for k<kf, -3 for k>kf)
-    if kf is not None and kf > 0:
-        ax.axvline(kf, linestyle=":", linewidth=1.25, label=f"$k_f={kf}$")
+        if kf is not None and kf > 0:
+            ax.axvline(kf, linestyle=":", linewidth=1.35, color=REFERENCE_LINE_COLOR, label=f"$k_f={kf}$")
 
-        # Reference slopes anchored separately on each side of kf (less misleading in 2D)
-        # Choose anchor points near 0.7*kf and 2*kf if possible.
-        def _anchor_at(k_target):
-            idx = np.argmin(np.abs(np.log(k_plot) - np.log(k_target)))
-            return k_plot[idx], Ek_plot[idx]
+            def _anchor_at(k_target):
+                idx = np.argmin(np.abs(np.log(k_plot) - np.log(k_target)))
+                return k_plot[idx], Ek_plot[idx]
 
-        # -5/3 on the low-k side (if you have room)
-        if np.any(k_plot < kf):
-            k0, y0 = _anchor_at(max(k_plot.min(), 0.7 * kf))
-            ax.loglog(
-                k_plot,
-                y0 * (k_plot / k0) ** (-5 / 3),
-                linestyle="--",
-                linewidth=1.0,
-                label=r"$k^{-5/3}$ (ref, inverse side)",
-            )
+            if np.any(k_plot < kf):
+                k0, y0 = _anchor_at(max(k_plot.min(), 0.7 * kf))
+                ax.loglog(
+                    k_plot,
+                    y0 * (k_plot / k0) ** (-5 / 3),
+                    linestyle="--",
+                    linewidth=1.2,
+                    color=REFERENCE_LINE_COLOR,
+                    label=r"$k^{-5/3}$ (ref, inverse side)",
+                )
 
-        # -3 on the high-k side
-        if np.any(k_plot > kf):
-            k0, y0 = _anchor_at(min(k_plot.max(), 2.0 * kf))
-            ax.loglog(
-                k_plot,
-                y0 * (k_plot / k0) ** (-3),
-                linestyle="--",
-                linewidth=1.0,
-                label=r"$k^{-3}$ (ref, forward side)",
-            )
+            if np.any(k_plot > kf):
+                k0, y0 = _anchor_at(min(k_plot.max(), 2.0 * kf))
+                ax.loglog(
+                    k_plot,
+                    y0 * (k_plot / k0) ** (-3),
+                    linestyle="--",
+                    linewidth=1.2,
+                    color="#667085",
+                    label=r"$k^{-3}$ (ref, forward side)",
+                )
 
-    ax.legend()
+        finalize_legend(ax, loc="best")
 
-    if save_path is not None:
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        fig.savefig(save_path, dpi=180)
-        plt.close(fig)
-    else:
-        plt.show()
+        if save_path is not None:
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            fig.savefig(save_path, dpi=180)
+            plt.close(fig)
+        else:
+            plt.show()
 
 
 def plot_fluid_vs_info_spectrum(
@@ -436,59 +445,65 @@ def plot_fluid_vs_info_spectrum(
         u_info, v_info, t_indices=info_k_indices, detrend_mean=True, window=info_window
     )
 
-    # Plot
-    fig, ax = plt.subplots(figsize=(7.8, 6.0), constrained_layout=True)
-
     m_fluid = np.isfinite(Ek_fluid) & (Ek_fluid > 0) & (k_fluid > 0)
     m_info = np.isfinite(Ek_info) & (Ek_info > 0) & (k_info > 0)
 
     k_plot = k_fluid[m_fluid]
     Ek_plot = Ek_fluid[m_fluid]
 
-    ax.loglog(k_plot, Ek_plot, label="Fluid (time-avg)")
-    ax.loglog(k_info[m_info], Ek_info[m_info], label=f"Info-flow (windowed: {info_window})")
+    with presentation_plot_context():
+        fig, ax = plt.subplots(figsize=SINGLE_PANEL_FIGSIZE, constrained_layout=True)
+        ax.loglog(k_plot, Ek_plot, color=FLUID_LINE_COLOR, label="Fluid (time-avg)")
+        ax.loglog(
+            k_info[m_info],
+            Ek_info[m_info],
+            color=INFO_LINE_COLOR,
+            linestyle=(0, (5, 2)),
+            label=f"Info-flow (windowed: {info_window})",
+        )
 
-    ax.set_xlabel("wavenumber $k$ (rad / length)")
-    ax.set_ylabel("$E(k)$ (energy density per unit $k$)")
-    ax.set_title(title)
+        ax.set_xlabel("wavenumber $k$ (rad / length)")
+        ax.set_ylabel("$E(k)$ (energy density per unit $k$)")
+        set_panel_title(ax, title)
+        apply_axis_style(ax, x_grid=True, y_grid=True)
 
-    if kf is not None and kf > 0:
-        ax.axvline(kf, linestyle=":", linewidth=1.25, label=f"$k_f={kf}$")
+        if kf is not None and kf > 0:
+            ax.axvline(kf, linestyle=":", linewidth=1.35, color=REFERENCE_LINE_COLOR, label=f"$k_f={kf}$")
 
-        def _anchor_at(k_target):
-            idx = np.argmin(np.abs(np.log(k_plot) - np.log(k_target)))
-            return k_plot[idx], Ek_plot[idx]
+            def _anchor_at(k_target):
+                idx = np.argmin(np.abs(np.log(k_plot) - np.log(k_target)))
+                return k_plot[idx], Ek_plot[idx]
 
-        # -5/3 on the low-k side (if you have room)
-        if np.any(k_plot < kf):
-            k0, y0 = _anchor_at(max(k_plot.min(), 0.7 * kf))
-            ax.loglog(
-                k_plot,
-                y0 * (k_plot / k0) ** (-5 / 3),
-                linestyle="--",
-                linewidth=1.0,
-                label=r"$k^{-5/3}$ (ref, inverse side)",
-            )
+            if np.any(k_plot < kf):
+                k0, y0 = _anchor_at(max(k_plot.min(), 0.7 * kf))
+                ax.loglog(
+                    k_plot,
+                    y0 * (k_plot / k0) ** (-5 / 3),
+                    linestyle="--",
+                    linewidth=1.2,
+                    color=REFERENCE_LINE_COLOR,
+                    label=r"$k^{-5/3}$ (ref, inverse side)",
+                )
 
-        # -3 on the high-k side
-        if np.any(k_plot > kf):
-            k0, y0 = _anchor_at(min(k_plot.max(), 2.0 * kf))
-            ax.loglog(
-                k_plot,
-                y0 * (k_plot / k0) ** (-3),
-                linestyle="--",
-                linewidth=1.0,
-                label=r"$k^{-3}$ (ref, forward side)",
-            )
+            if np.any(k_plot > kf):
+                k0, y0 = _anchor_at(min(k_plot.max(), 2.0 * kf))
+                ax.loglog(
+                    k_plot,
+                    y0 * (k_plot / k0) ** (-3),
+                    linestyle="--",
+                    linewidth=1.2,
+                    color="#667085",
+                    label=r"$k^{-3}$ (ref, forward side)",
+                )
 
-    ax.legend()
+        finalize_legend(ax, loc="best")
 
-    if save_path is not None:
-        os.makedirs(os.path.dirname(save_path), exist_ok=True)
-        fig.savefig(save_path, dpi=180)
-        plt.close(fig)
-    else:
-        plt.show()
+        if save_path is not None:
+            os.makedirs(os.path.dirname(save_path), exist_ok=True)
+            fig.savefig(save_path, dpi=180)
+            plt.close(fig)
+        else:
+            plt.show()
 
 
 if __name__ == "__main__":

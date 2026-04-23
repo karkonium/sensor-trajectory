@@ -2,6 +2,7 @@ import os, pickle
 import numpy as np
 import matplotlib.pyplot as plt
 import imageio.v2 as imageio
+from matplotlib.patches import Rectangle
 
 from numbacs.flows import get_interp_arrays_2D, get_flow_2D
 from numbacs.integration import flowmap_grid_2D
@@ -9,6 +10,14 @@ from numbacs.diagnostics import ftle_grid_2D
 
 from plotting import make_gif_from_dir, load_pickles, _k_starts_from
 from data_generation import *
+from plot_style import (
+    INFO_LINE_COLOR,
+    SINGLE_PANEL_FIGSIZE,
+    add_frame_badge,
+    presentation_plot_context,
+    set_panel_title,
+    style_spatial_axis,
+)
 
 
 def _norm01(A, lo, hi, gamma=0.85):
@@ -65,46 +74,56 @@ def save_ftle_overlap_series_plots(
     fluid_extent = (0.0, float(LX), 0.0, float(LY))
 
     N = ftle_info_series.shape[0]
-    for i in range(N):
-        A = ftle_info_series[i]   # (nx_info, ny_info)
-        B = ftle_fluid_series[i]  # (NX, NY)
+    with presentation_plot_context():
+        for i in range(N):
+            A = ftle_info_series[i]   # (nx_info, ny_info)
+            B = ftle_fluid_series[i]  # (NX, NY)
 
-        A01 = _norm01(A, info_lo, info_hi, gamma=gamma)
-        B01 = _norm01(B, fluid_lo, fluid_hi, gamma=gamma)
+            A01 = _norm01(A, info_lo, info_hi, gamma=gamma)
+            B01 = _norm01(B, fluid_lo, fluid_hi, gamma=gamma)
 
-        fig, ax = plt.subplots(1, 1, figsize=(7.2, 5.6), constrained_layout=True)
-        ax.set_facecolor("black")
+            fig, ax = plt.subplots(1, 1, figsize=SINGLE_PANEL_FIGSIZE, constrained_layout=True)
 
-        # Fluid layer (full domain)
-        ax.imshow(
-            B01.T,
-            origin="lower",
-            extent=fluid_extent,
-            aspect="equal",
-            cmap="Blues",
-            alpha=np.clip(B01.T * alpha_max, 0.0, alpha_max),   # per-pixel alpha
-            interpolation="nearest",
-        )
+            ax.imshow(
+                B01.T,
+                origin="lower",
+                extent=fluid_extent,
+                aspect="equal",
+                cmap="Blues",
+                alpha=np.clip(B01.T * alpha_max, 0.0, alpha_max),
+                interpolation="nearest",
+            )
 
-        # Info layer (its subdomain)
-        ax.imshow(
-            A01.T,
-            origin="lower",
-            extent=info_extent,
-            aspect="equal",
-            cmap="Reds",
-            alpha=np.clip(A01.T * alpha_max, 0.0, alpha_max),   # per-pixel alpha
-            interpolation="nearest",
-        )
+            ax.imshow(
+                A01.T,
+                origin="lower",
+                extent=info_extent,
+                aspect="equal",
+                cmap="Reds",
+                alpha=np.clip(A01.T * alpha_max, 0.0, alpha_max),
+                interpolation="nearest",
+            )
 
-        ax.set_xlim(0, LX)
-        ax.set_ylim(0, LY)
-        ax.set_xlabel("x")
-        ax.set_ylabel("y")
-        ax.set_title("Overlap: Red=info FTLE (subdomain), Blue=fluid FTLE (full); brighter = stronger")
+            ax.add_patch(
+                Rectangle(
+                    (info_extent[0], info_extent[2]),
+                    info_extent[1] - info_extent[0],
+                    info_extent[3] - info_extent[2],
+                    fill=False,
+                    linewidth=1.4,
+                    linestyle=(0, (4, 2)),
+                    edgecolor=INFO_LINE_COLOR,
+                    alpha=0.9,
+                )
+            )
 
-        fig.savefig(os.path.join(outdir, f"{basename}_{i:04d}.png"), dpi=dpi)
-        plt.close(fig)
+            style_spatial_axis(ax, xlim=(0.0, float(LX)), ylim=(0.0, float(LY)))
+            set_panel_title(ax, "FTLE overlap", f"Frame {i + 1:03d} / {N:03d}")
+            add_frame_badge(ax, "Blue: fluid FTLE\nRed: info FTLE")
+            add_frame_badge(ax, "Dashed box: info subdomain", loc="upper right")
+
+            fig.savefig(os.path.join(outdir, f"{basename}_{i:04d}.png"), dpi=dpi)
+            plt.close(fig)
 
 
 def ftle_from_uv_series_on_grid(u_t, v_t, x, y, dt, direction="forward"):

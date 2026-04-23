@@ -5,6 +5,19 @@ import imageio.v2 as imageio
 from matplotlib.colors import TwoSlopeNorm
 
 from data_generation import *
+from plot_style import (
+    DIVERGENCE_CMAP,
+    FLOW_VECTOR_COLOR,
+    INFO_VECTOR_COLOR,
+    RIDGE_COLOR,
+    SCALAR_OVERLAY_CMAP,
+    SINGLE_PANEL_FIGSIZE,
+    add_frame_badge,
+    presentation_plot_context,
+    set_panel_title,
+    style_colorbar,
+    style_spatial_axis,
+)
 
 def make_gif_from_dir(in_dir, out_gif, duration=0.1):
     """
@@ -24,7 +37,7 @@ def make_gif_from_dir(in_dir, out_gif, duration=0.1):
         frames.append(imageio.imread(img_path))
 
     imageio.mimsave(out_gif, frames, duration=duration)
-    print(f"[GIF] Saved: {out_gif}")
+    # print(f"[GIF] Saved: {out_gif}")
 
 
 def load_pickles(results_dir, name):
@@ -104,7 +117,7 @@ def render_overlay_frames(
     outdir, title_prefix,
     ridge_pct=92,
     qskip=1,
-    cmap="gray",
+    cmap="Greys",
     alpha=0.80,
     dpi=180,
 ):
@@ -115,103 +128,108 @@ def render_overlay_frames(
     N = ftle_field_series.shape[0]
     extent = (float(x[0]), float(x[-1]), float(y[0]), float(y[-1]))
 
-    for idx in range(N):
-        ftle_field = ftle_field_series[idx]
+    with presentation_plot_context():
+        for idx in range(N):
+            ftle_field = ftle_field_series[idx]
 
-        # gentle contrast so quiver pops
-        vmin = np.percentile(ftle_field, 5)
-        vmax = np.percentile(ftle_field, 95)
+            # Gentle contrast so the overlay remains visible without washing out the FTLE field.
+            vmin = np.percentile(ftle_field, 5)
+            vmax = np.percentile(ftle_field, 95)
 
-        Vmean, meta = V_provider(idx)
-        Vmean = np.asarray(Vmean)
+            Vmean, meta = V_provider(idx)
+            Vmean = np.asarray(Vmean)
 
-        fig, ax = plt.subplots(1, 1, figsize=(7.2, 5.6), constrained_layout=True)
-
-        ax.imshow(
-            ftle_field.T,
-            origin="lower",
-            extent=extent,
-            aspect="equal",
-            cmap=cmap,
-            alpha=alpha,
-            vmin=vmin,
-            vmax=vmax,
-        )
-
-        # ridge overlay (optional but recommended)
-        th = np.percentile(ftle_field, ridge_pct)
-        ax.contour(Xg, Yg, ftle_field, levels=[th], colors="white", linewidths=1.2)
-
-        if Vmean.ndim == 3 and Vmean.shape[-1] == 2:
-            # Vector field overlay.
-            if Vmean.shape[0] == len(x) and Vmean.shape[1] == len(y):
-                Xq, Yq = Xg, Yg
-                xq, yq = x, y
-            else:
-                NX, NY = Vmean.shape[:2]
-                xq = np.linspace(0.0, LX, NX)
-                yq = np.linspace(0.0, LY, NY)
-                Xq, Yq = np.meshgrid(xq, yq, indexing="ij")
-
-            Vplot = _normalize_for_display(Vmean, xq, yq)
-            Vp = Vplot[::qskip, ::qskip, :]
-            Xp = Xq[::qskip, ::qskip]
-            Yp = Yq[::qskip, ::qskip]
-
-            ax.quiver(
-                Xp, Yp,
-                Vp[..., 0], Vp[..., 1],
-                angles="xy",
-                scale_units="xy",
-                scale=None,
-                width=0.0028,
-                color="tab:orange",
-            )
-        elif Vmean.ndim == 2:
-            # Scalar field overlay: use translucent heatmap + isolines instead of quiver.
-            if Vmean.shape[0] == len(x) and Vmean.shape[1] == len(y):
-                Xs, Ys = Xg, Yg
-                extent_scalar = extent
-            else:
-                NX, NY = Vmean.shape
-                xs = np.linspace(0.0, LX, NX)
-                ys = np.linspace(0.0, LY, NY)
-                Xs, Ys = np.meshgrid(xs, ys, indexing="ij")
-                extent_scalar = (float(xs[0]), float(xs[-1]), float(ys[0]), float(ys[-1]))
-
-            s_lo = np.percentile(Vmean, 5)
-            s_hi = np.percentile(Vmean, 95)
-            if (not np.isfinite(s_lo)) or (not np.isfinite(s_hi)) or (s_hi <= s_lo):
-                s_lo = float(np.nanmin(Vmean))
-                s_hi = float(np.nanmax(Vmean) + 1e-12)
+            fig, ax = plt.subplots(1, 1, figsize=SINGLE_PANEL_FIGSIZE, constrained_layout=True)
 
             ax.imshow(
-                Vmean.T,
+                ftle_field.T,
                 origin="lower",
-                extent=extent_scalar,
+                extent=extent,
                 aspect="equal",
-                cmap="viridis",
-                alpha=0.35,
-                vmin=s_lo,
-                vmax=s_hi,
+                cmap=cmap,
+                alpha=alpha,
+                vmin=vmin,
+                vmax=vmax,
             )
 
-            if s_hi > s_lo:
-                levels = np.linspace(s_lo, s_hi, 7)
-                ax.contour(Xs, Ys, Vmean, levels=levels, cmap="viridis", linewidths=0.8, alpha=0.85)
-        else:
-            raise ValueError(
-                "V_provider must return either a vector field (NX,NY,2) or scalar field (NX,NY)."
-            )
+            th = np.percentile(ftle_field, ridge_pct)
+            ax.contour(Xg, Yg, ftle_field, levels=[th], colors=RIDGE_COLOR, linewidths=1.4, alpha=0.95)
 
-        ax.set_xlim(0, LX)
-        ax.set_ylim(0, LY)
-        ax.set_xlabel("x")
-        ax.set_ylabel("y")
-        ax.set_title(f"{title_prefix}  idx={idx:04d}  meta={meta}")
+            if Vmean.ndim == 3 and Vmean.shape[-1] == 2:
+                if Vmean.shape[0] == len(x) and Vmean.shape[1] == len(y):
+                    Xq, Yq = Xg, Yg
+                    xq, yq = x, y
+                else:
+                    NX, NY = Vmean.shape[:2]
+                    xq = np.linspace(0.0, LX, NX)
+                    yq = np.linspace(0.0, LY, NY)
+                    Xq, Yq = np.meshgrid(xq, yq, indexing="ij")
 
-        fig.savefig(os.path.join(outdir, f"frame_{idx:04d}.png"), dpi=dpi)
-        plt.close(fig)
+                Vplot = _normalize_for_display(Vmean, xq, yq)
+                Vp = Vplot[::qskip, ::qskip, :]
+                Xp = Xq[::qskip, ::qskip]
+                Yp = Yq[::qskip, ::qskip]
+
+                ax.quiver(
+                    Xp, Yp,
+                    Vp[..., 0], Vp[..., 1],
+                    angles="xy",
+                    scale_units="xy",
+                    scale=None,
+                    width=0.0032,
+                    color=INFO_VECTOR_COLOR,
+                    alpha=0.95,
+                )
+            elif Vmean.ndim == 2:
+                if Vmean.shape[0] == len(x) and Vmean.shape[1] == len(y):
+                    Xs, Ys = Xg, Yg
+                    extent_scalar = extent
+                else:
+                    NX, NY = Vmean.shape
+                    xs = np.linspace(0.0, LX, NX)
+                    ys = np.linspace(0.0, LY, NY)
+                    Xs, Ys = np.meshgrid(xs, ys, indexing="ij")
+                    extent_scalar = (float(xs[0]), float(xs[-1]), float(ys[0]), float(ys[-1]))
+
+                s_lo = np.percentile(Vmean, 5)
+                s_hi = np.percentile(Vmean, 95)
+                if (not np.isfinite(s_lo)) or (not np.isfinite(s_hi)) or (s_hi <= s_lo):
+                    s_lo = float(np.nanmin(Vmean))
+                    s_hi = float(np.nanmax(Vmean) + 1e-12)
+
+                ax.imshow(
+                    Vmean.T,
+                    origin="lower",
+                    extent=extent_scalar,
+                    aspect="equal",
+                    cmap=SCALAR_OVERLAY_CMAP,
+                    alpha=0.34,
+                    vmin=s_lo,
+                    vmax=s_hi,
+                )
+
+                if s_hi > s_lo:
+                    levels = np.linspace(s_lo, s_hi, 7)
+                    ax.contour(
+                        Xs,
+                        Ys,
+                        Vmean,
+                        levels=levels,
+                        colors="#0F172A",
+                        linewidths=0.9,
+                        alpha=0.75,
+                    )
+            else:
+                raise ValueError(
+                    "V_provider must return either a vector field (NX,NY,2) or scalar field (NX,NY)."
+                )
+
+            style_spatial_axis(ax, xlim=(0.0, float(LX)), ylim=(0.0, float(LY)))
+            set_panel_title(ax, title_prefix, f"Frame {idx + 1:03d} / {N:03d}")
+            add_frame_badge(ax, str(meta))
+
+            fig.savefig(os.path.join(outdir, f"frame_{idx:04d}.png"), dpi=dpi)
+            plt.close(fig)
 
 
 def overlay_lcs_with_flows(reg_piv, ftle, results_dir, name, u, v, LX, LY,
@@ -239,7 +257,7 @@ def overlay_lcs_with_flows(reg_piv, ftle, results_dir, name, u, v, LX, LY,
         title_prefix=f"{name}: {lcs_label} + mean info-flow",
         ridge_pct=ridge_pct,
         qskip=qskip,
-        cmap="gray",
+        cmap="Greys",
         alpha=0.80,
     )
     gif_info = os.path.join(results_dir, f"{name}_ftle_plus_info.gif")
@@ -258,7 +276,7 @@ def overlay_lcs_with_flows(reg_piv, ftle, results_dir, name, u, v, LX, LY,
         title_prefix=f"{name}: {lcs_label} + {fluid_label}",
         ridge_pct=ridge_pct,
         qskip=qskip * 3 if v is not None else qskip,
-        cmap="gray",
+        cmap="Greys",
         alpha=0.80,
     )
     gif_fluid = os.path.join(results_dir, f"{name}_ftle_plus_fluid.gif")
@@ -301,7 +319,7 @@ def divergence_info_feild(
     title_prefix=None,
     stride=1,
     qskip=10,
-    cmap="gray",
+    cmap="Greys",
     # cmap_div="coolwarm",
     alpha_div=0.70,
     dpi=180,
@@ -350,10 +368,10 @@ def divergence_info_feild(
             divk = _divergence_2d(Vk[..., 0], Vk[..., 1], dx_info, dy_info)
             div_vals.append(divk.ravel())
         div_vals = np.concatenate(div_vals)
-        lim = float(np.percentile(np.abs(div_vals), div_pct))
-        lim = max(lim, 1e-12)
+        div_limit = float(np.percentile(np.abs(div_vals), div_pct))
+        div_limit = max(div_limit, 1e-12)
     else:
-        lim = None
+        div_limit = None
 
     # diagnostics for mean-flow divergence
     flow_rms = []
@@ -362,75 +380,81 @@ def divergence_info_feild(
     extent_full = (0.0, float(LX), 0.0, float(LY))
 
     frame_idx = 0
-    for k in range(0, K, stride):
-        s, e = intervals[k]
-        s = int(s); e = int(e)
+    with presentation_plot_context():
+        for k in range(0, K, stride):
+            s, e = intervals[k]
+            s = int(s); e = int(e)
 
-        u_mean = np.asarray(u[s:e].mean(axis=0), dtype=np.float64)
-        v_mean = np.asarray(v[s:e].mean(axis=0), dtype=np.float64)
-        speed  = np.sqrt(u_mean**2 + v_mean**2)
+            u_mean = np.asarray(u[s:e].mean(axis=0), dtype=np.float64)
+            v_mean = np.asarray(v[s:e].mean(axis=0), dtype=np.float64)
+            speed  = np.sqrt(u_mean**2 + v_mean**2)
 
-        div_flow = _divergence_2d(u_mean, v_mean, dx_flow, dy_flow)
-        flow_rms.append(float(np.sqrt(np.mean(div_flow**2))))
-        flow_max.append(float(np.max(np.abs(div_flow))))
+            div_flow = _divergence_2d(u_mean, v_mean, dx_flow, dy_flow)
+            flow_rms.append(float(np.sqrt(np.mean(div_flow**2))))
+            flow_max.append(float(np.max(np.abs(div_flow))))
 
-        Vk = V_info[k]
-        div_info = _divergence_2d(Vk[..., 0], Vk[..., 1], dx_info, dy_info)
+            Vk = V_info[k]
+            div_info = _divergence_2d(Vk[..., 0], Vk[..., 1], dx_info, dy_info)
 
-        # same "gentle contrast" style as our FTLE overlay:
-        vmin_bg = np.percentile(speed, 5)
-        vmax_bg = np.percentile(speed, 95)
+            vmin_bg = np.percentile(speed, 5)
+            vmax_bg = np.percentile(speed, 95)
 
-        if lim is None:
-            lim_k = float(np.percentile(np.abs(div_info), div_pct))
-            lim_k = max(lim_k, 1e-12)
-        else:
-            lim_k = lim
+            if div_limit is None:
+                lim_k = float(np.percentile(np.abs(div_info), div_pct))
+                lim_k = max(lim_k, 1e-12)
+            else:
+                lim_k = div_limit
 
-        fig, ax = plt.subplots(1, 1, figsize=(7.2, 5.6), constrained_layout=True)
+            fig, ax = plt.subplots(1, 1, figsize=SINGLE_PANEL_FIGSIZE, constrained_layout=True)
 
-        lim = np.percentile(np.abs(div_info), 98)   # or a fixed lim across frames
-        norm = TwoSlopeNorm(vmin=-lim, vcenter=0.0, vmax=lim)
+            ax.imshow(
+                speed.T,
+                origin="lower",
+                extent=extent_full,
+                aspect="equal",
+                cmap=cmap,
+                alpha=0.34,
+                vmin=vmin_bg,
+                vmax=vmax_bg,
+            )
 
-        im = ax.imshow(
-            div_info.T,
-            origin="lower",
-            extent=extent_info,
-            aspect="equal",
-            cmap="bwr",      # white at 0
-            norm=norm,
-            alpha=alpha_div,
-        )
+            norm = TwoSlopeNorm(vmin=-lim_k, vcenter=0.0, vmax=lim_k)
+            im = ax.imshow(
+                div_info.T,
+                origin="lower",
+                extent=extent_info,
+                aspect="equal",
+                cmap=DIVERGENCE_CMAP,
+                norm=norm,
+                alpha=alpha_div,
+            )
 
-        cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-        cbar.set_label("div(info velocity)")
+            cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
+            style_colorbar(cbar, r"$\nabla \cdot v_{\mathrm{info}}$")
 
+            qs = max(1, int(qskip))
+            xq = np.linspace(0.0, LX, NX)
+            yq = np.linspace(0.0, LY, NY)
+            Xq, Yq = np.meshgrid(xq, yq, indexing="ij")
 
-        # quiver overlay (same look as ours)
-        qs = max(1, int(qskip))
-        xq = np.linspace(0.0, LX, NX)
-        yq = np.linspace(0.0, LY, NY)
-        Xq, Yq = np.meshgrid(xq, yq, indexing="ij")
+            ax.quiver(
+                Xq[::qs, ::qs], Yq[::qs, ::qs],
+                u_mean[::qs, ::qs], v_mean[::qs, ::qs],
+                angles="xy",
+                scale_units="xy",
+                scale=None,
+                width=0.0032,
+                color=FLOW_VECTOR_COLOR,
+                alpha=0.90,
+            )
 
-        ax.quiver(
-            Xq[::qs, ::qs], Yq[::qs, ::qs],
-            u_mean[::qs, ::qs], v_mean[::qs, ::qs],
-            angles="xy",
-            scale_units="xy",
-            scale=None,
-            width=0.0028,
-            color="black",
-        )
+            style_spatial_axis(ax, xlim=(0.0, float(LX)), ylim=(0.0, float(LY)))
+            set_panel_title(ax, title_prefix, f"Frame {frame_idx + 1:03d}")
+            add_frame_badge(ax, f"Window {k:03d}\nFrames [{s}, {e})")
 
-        ax.set_xlim(0, LX)
-        ax.set_ylim(0, LY)
-        ax.set_xlabel("x")
-        ax.set_ylabel("y")
-        ax.set_title(f"{title_prefix}  k={k:04d}  frames[{s},{e})")
-
-        fig.savefig(os.path.join(outdir, f"frame_{frame_idx:04d}.png"), dpi=dpi)
-        plt.close(fig)
-        frame_idx += 1
+            fig.savefig(os.path.join(outdir, f"frame_{frame_idx:04d}.png"), dpi=dpi)
+            plt.close(fig)
+            frame_idx += 1
 
     print(f"[div(mean flow)] mean RMS: {np.mean(flow_rms):.3e}")
     print(f"[div(mean flow)] max  RMS: {np.max(flow_rms):.3e}")

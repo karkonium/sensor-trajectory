@@ -6,6 +6,17 @@ from joblib import Parallel, delayed
 from numbacs.flows import get_interp_arrays_2D, get_flow_2D
 from numbacs.integration import flowmap_grid_2D
 from numbacs.diagnostics import ftle_grid_2D
+from plot_style import (
+    FTLE_CMAP,
+    INFO_VECTOR_COLOR,
+    RIDGE_COLOR,
+    WIDE_PANEL_FIGSIZE,
+    add_frame_badge,
+    presentation_plot_context,
+    set_panel_title,
+    style_colorbar,
+    style_spatial_axis,
+)
 
 
 def quiver_row(
@@ -24,34 +35,44 @@ def quiver_row(
     diag = np.hypot(x.max()-x.min(), y.max()-y.min())
     scale = np.quantile(mags, 0.90) / max(0.12*diag, 1e-12)
 
-    fig, axes = plt.subplots(1, cols, figsize=(4.5*cols, 4), constrained_layout=True)
-    axes = np.atleast_1d(axes)
-
     xpad = 0.05*(x.max()-x.min()); ypad = 0.05*(y.max()-y.min())
     xlim = (x.min()-xpad, x.max()+xpad); ylim = (y.min()-ypad, y.max()+ypad)
     tau = res["meta"]["time_window"] * dt
 
-    for ax, k in zip(axes, idxs):
-        v = ms[k] / tau
-        ax.set_aspect('equal', adjustable='box')
-        ax.set_xlim(*xlim); ax.set_ylim(*ylim)
-        ax.quiver(x, y, v[:, 0], v[:, 1], angles='xy', scale_units='xy', scale=None, width=0.003)
-        if "intervals" in res:
-            s, e = res["intervals"][k]; ax.set_title(f"w{k}  t∈[{s},{e})")
+    with presentation_plot_context():
+        fig, axes = plt.subplots(1, cols, figsize=(4.6 * cols, 4.8), constrained_layout=True)
+        axes = np.atleast_1d(axes)
+
+        for ax, k in zip(axes, idxs):
+            v = ms[k] / tau
+            ax.quiver(
+                x,
+                y,
+                v[:, 0],
+                v[:, 1],
+                angles="xy",
+                scale_units="xy",
+                scale=None,
+                width=0.0034,
+                color=INFO_VECTOR_COLOR,
+                alpha=0.95,
+            )
+            style_spatial_axis(ax, xlim=xlim, ylim=ylim)
+            if "intervals" in res:
+                s, e = res["intervals"][k]
+                set_panel_title(ax, f"Window {k:03d}", f"Frames [{s}, {e})")
+            else:
+                set_panel_title(ax, f"Window {k:03d}")
+
+        if outdir is not None:
+            os.makedirs(outdir, exist_ok=True)
+            fname = f"{basename}.png"
+            fig.savefig(os.path.join(outdir, fname), dpi=dpi)
+
+        if show:
+            plt.show()
         else:
-            ax.set_title(f"w{k}")
-        ax.set_xlabel("x"); ax.set_ylabel("y")
-
-    # save instead of show 
-    if outdir is not None:
-        os.makedirs(outdir, exist_ok=True)
-        fname = f"{basename}.png"
-        fig.savefig(os.path.join(outdir, fname), dpi=dpi)
-
-    if show:
-        plt.show()
-    else:
-        plt.close(fig)
+            plt.close(fig)
 
 
 def velocity_from_optimal_direction(result_dict, time_window, dt):
@@ -383,37 +404,60 @@ def save_ftle_series_plots(
     N, out_nx, out_ny = ftle_fwd_series.shape
     extent = (float(x[0]), float(x[-1]), float(y[0]), float(y[-1]))
     px, py = pad_frac * lx, pad_frac * ly
+    ftle_values = np.concatenate([ftle_fwd_series.ravel(), ftle_bwd_series.ravel()])
+    ftle_lo = float(np.percentile(ftle_values, 5))
+    ftle_hi = float(np.percentile(ftle_values, 98))
+    if (not np.isfinite(ftle_lo)) or (not np.isfinite(ftle_hi)) or (ftle_hi <= ftle_lo):
+        ftle_lo = float(np.nanmin(ftle_values))
+        ftle_hi = float(np.nanmax(ftle_values) + 1e-12)
 
-    for idx in range(N):
-        ftle_fwd = ftle_fwd_series[idx]
-        ftle_bwd = ftle_bwd_series[idx]
-        t = t_centers[idx]
+    with presentation_plot_context():
+        for idx in range(N):
+            ftle_fwd = ftle_fwd_series[idx]
+            ftle_bwd = ftle_bwd_series[idx]
+            t = t_centers[idx]
 
-        fig, axes = plt.subplots(1, 2, figsize=(12, 5), constrained_layout=True)
+            fig, axes = plt.subplots(1, 2, figsize=WIDE_PANEL_FIGSIZE, constrained_layout=True)
 
-        im0 = axes[0].imshow(ftle_fwd.T, origin='lower', extent=extent,
-                             aspect='equal', cmap='magma')
-        axes[0].set_title(f"Forward FTLE (repelling)\nt = {t:.3f}")
-        axes[0].set_xlim(-px, lx + px); axes[0].set_ylim(-py, ly + py)
-        plt.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04, label='FTLE')
+            im0 = axes[0].imshow(
+                ftle_fwd.T,
+                origin="lower",
+                extent=extent,
+                aspect="equal",
+                cmap=FTLE_CMAP,
+                vmin=ftle_lo,
+                vmax=ftle_hi,
+            )
+            style_spatial_axis(axes[0], xlim=(-px, lx + px), ylim=(-py, ly + py))
+            set_panel_title(axes[0], "Forward FTLE", f"Repelling structures | t = {t:.3f}")
+            cbar0 = fig.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
+            style_colorbar(cbar0, "FTLE")
 
-        im1 = axes[1].imshow(ftle_bwd.T, origin='lower', extent=extent,
-                             aspect='equal', cmap='magma')
-        axes[1].set_title(f"Backward FTLE (attracting)\nt = {t:.3f}")
-        axes[1].set_xlim(-px, lx + px); axes[1].set_ylim(-py, ly + py)
-        plt.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04, label='FTLE')
+            im1 = axes[1].imshow(
+                ftle_bwd.T,
+                origin="lower",
+                extent=extent,
+                aspect="equal",
+                cmap=FTLE_CMAP,
+                vmin=ftle_lo,
+                vmax=ftle_hi,
+            )
+            style_spatial_axis(axes[1], xlim=(-px, lx + px), ylim=(-py, ly + py))
+            set_panel_title(axes[1], "Backward FTLE", f"Attracting structures | t = {t:.3f}")
+            cbar1 = fig.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
+            style_colorbar(cbar1, "FTLE")
 
-        # ridges
-        th_f = np.percentile(ftle_fwd, ridge_pct)
-        th_b = np.percentile(ftle_bwd, ridge_pct)
-        Xg, Yg = np.meshgrid(x, y, indexing='ij')
-        axes[0].contour(Xg, Yg, ftle_fwd, levels=[th_f], colors='cyan', linewidths=1.2)
-        axes[1].contour(Xg, Yg, ftle_bwd, levels=[th_b], colors='cyan', linewidths=1.2)
+            th_f = np.percentile(ftle_fwd, ridge_pct)
+            th_b = np.percentile(ftle_bwd, ridge_pct)
+            Xg, Yg = np.meshgrid(x, y, indexing="ij")
+            axes[0].contour(Xg, Yg, ftle_fwd, levels=[th_f], colors=RIDGE_COLOR, linewidths=1.4)
+            axes[1].contour(Xg, Yg, ftle_bwd, levels=[th_b], colors=RIDGE_COLOR, linewidths=1.4)
+            add_frame_badge(axes[0], f"Frame {idx + 1:03d} / {N:03d}")
 
-        fname = f"{basename}_{idx:04d}.png"
-        fig.savefig(os.path.join(outdir, fname), dpi=dpi)
+            fname = f"{basename}_{idx:04d}.png"
+            fig.savefig(os.path.join(outdir, fname), dpi=dpi)
 
-        if show:
-            plt.show()
-        else:
-            plt.close(fig)
+            if show:
+                plt.show()
+            else:
+                plt.close(fig)

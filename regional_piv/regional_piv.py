@@ -8,6 +8,14 @@ from matplotlib.colors import TwoSlopeNorm
 from matplotlib.colors import LinearSegmentedColormap
 
 import pysensors as ps
+from plot_style import (
+    INFO_VECTOR_COLOR,
+    SINGLE_PANEL_FIGSIZE,
+    add_frame_badge,
+    presentation_plot_context,
+    set_panel_title,
+    style_spatial_axis,
+)
 
 from tqdm.auto import tqdm
 
@@ -284,36 +292,48 @@ def regional_local_optimal_direction_series(
         if save_plots:
             os.makedirs(plot_dir, exist_ok=True)
 
-        for w_idx, (s, e) in enumerate(intervals):
-            if w_idx % max(1, plot_every) != 0:
-                continue
+        with presentation_plot_context():
+            for w_idx, (s, e) in enumerate(intervals):
+                if w_idx % max(1, plot_every) != 0:
+                    continue
 
-            mv = move_series[w_idx, :, :]  # (M,2)
+                mv = move_series[w_idx, :, :]  # (M,2)
 
-            fig, ax = plt.subplots(1, 1, figsize=(6, 5), constrained_layout=True)
-            ax.set_title(f"Regional local optimal dir — window {w_idx}  (t ∈ [{s},{e}))")
-            ax.set_aspect('equal', adjustable='box')
-            ax.set_xlim(0, lx)
-            ax.set_ylim(0, ly)
+                fig, ax = plt.subplots(1, 1, figsize=SINGLE_PANEL_FIGSIZE, constrained_layout=True)
+                ax.scatter(
+                    centers_xy[:, 0],
+                    centers_xy[:, 1],
+                    s=14,
+                    color="#94A3B8",
+                    alpha=0.35,
+                    linewidths=0,
+                    zorder=1,
+                )
+                ax.quiver(
+                    centers_xy[:, 0],
+                    centers_xy[:, 1],
+                    mv[:, 0],
+                    mv[:, 1],
+                    color=INFO_VECTOR_COLOR,
+                    angles="xy",
+                    scale_units="xy",
+                    scale=None,
+                    width=0.0034,
+                    alpha=0.95,
+                    zorder=2,
+                )
+                style_spatial_axis(ax, xlim=(0.0, float(lx)), ylim=(0.0, float(ly)))
+                set_panel_title(ax, "Regional optimal direction field", f"Window {w_idx:03d}")
+                add_frame_badge(ax, f"Frames [{s}, {e})")
 
-            ax.quiver(
-                centers_xy[:, 0], centers_xy[:, 1],
-                mv[:, 0], mv[:, 1],
-                color='crimson', angles='xy', scale_units='xy', scale=None, width=0.003,
-                label='sensor direction'
-            )
-            ax.legend(loc='upper right')
-            ax.set_xlabel('x')
-            ax.set_ylabel('y')
+                if save_plots:
+                    fname = f"window_{w_idx:04d}.png"
+                    fig.savefig(os.path.join(plot_dir, fname), dpi=150)
 
-            if save_plots:
-                fname = f"window_{w_idx:04d}.png"
-                fig.savefig(os.path.join(plot_dir, fname), dpi=150)
-
-            if show:
-                plt.show()
-            else:
-                plt.close(fig)
+                if show:
+                    plt.show()
+                else:
+                    plt.close(fig)
 
     # reshape to grid for convenience
     move_grid = move_series.reshape(K, out_nx, out_ny, 2)
