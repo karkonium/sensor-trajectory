@@ -12,6 +12,7 @@ from plotting import make_gif_from_dir, load_pickles, _k_starts_from
 from data_generation import *
 from plot_style import (
     INFO_LINE_COLOR,
+    SCALAR_OVERLAY_CMAP,
     SINGLE_PANEL_FIGSIZE,
     add_frame_badge,
     presentation_plot_context,
@@ -37,35 +38,68 @@ def _norm01(A, lo, hi, gamma=0.85):
     """
     B = (A - lo) / max(hi - lo, 1e-12)
     B = np.clip(B, 0.0, 1.0)
-    return B ** gamma
+    B = B ** gamma
+    B[~np.isfinite(B)] = 0.0
+    return B
+
+
+def _finite_percentile_limits(field, low=5, high=95):
+    """Return robust percentile limits using only finite values."""
+    values = np.asarray(field, dtype=np.float64)
+    values = values[np.isfinite(values)]
+    if values.size == 0:
+        return 0.0, 1.0
+
+    lo = float(np.percentile(values, low))
+    hi = float(np.percentile(values, high))
+    if hi <= lo:
+        hi = lo + 1e-12
+    return lo, hi
+
+
+def _temporal_mean_field(field_slice):
+    """Compute a time mean while tolerating NaNs in scalar fields."""
+    data = np.asarray(field_slice, dtype=np.float64)
+    if not np.isnan(data).any():
+        return data.mean(axis=0)
+
+    valid = np.isfinite(data)
+    counts = valid.sum(axis=0)
+    summed = np.where(valid, data, 0.0).sum(axis=0)
+    out = np.full(data.shape[1:], np.nan, dtype=np.float64)
+    np.divide(summed, counts, out=out, where=counts > 0)
+    return out
 
 
 def save_ftle_overlap_series_plots(
-    ftle_info_series, ftle_fluid_series,
+    ftle_info_series, background_series,
     x_info, y_info,          # info-grid coordinates
     LX, LY,                  # full fluid domain size
     outdir, basename,
     dpi=180,
     gamma=0.85,
     alpha_max=0.90,
+    background_label="fluid FTLE",
+    background_cmap="Blues",
+    title="Info FTLE overlap",
 ):
     """
     Draw overlap WITHOUT resampling:
-      - Fluid FTLE: imshow on full domain extent (0..LX, 0..LY) using Blues
-      - Info FTLE : imshow on its own extent (min/max of x_info/y_info) using Reds
+      - Background field on the full domain extent (0..LX, 0..LY)
+      - Info FTLE on its own extent (min/max of x_info/y_info) using Reds
       - Alpha is field-dependent so low values are transparent and hotspots pop.
     """
     os.makedirs(outdir, exist_ok=True)
 
     ftle_info_series  = np.asarray(ftle_info_series)
-    ftle_fluid_series = np.asarray(ftle_fluid_series)
+    background_series = np.asarray(background_series)
 
-    if ftle_info_series.shape[0] != ftle_fluid_series.shape[0]:
-        raise ValueError("Time length mismatch: info vs fluid FTLE series")
+    if ftle_info_series.shape[0] != background_series.shape[0]:
+        raise ValueError("Time length mismatch: info FTLE series vs background series")
 
     # global normalization (stable brightness across frames)
-    info_lo, info_hi   = np.percentile(ftle_info_series,  [5, 95])
-    fluid_lo, fluid_hi = np.percentile(ftle_fluid_series, [5, 95])
+    info_lo, info_hi = _finite_percentile_limits(ftle_info_series, 5, 95)
+    background_lo, background_hi = _finite_percentile_limits(background_series, 5, 95)
 
     x_info = np.asarray(x_info)
     y_info = np.asarray(y_info)
@@ -77,10 +111,10 @@ def save_ftle_overlap_series_plots(
     with presentation_plot_context():
         for i in range(N):
             A = ftle_info_series[i]   # (nx_info, ny_info)
-            B = ftle_fluid_series[i]  # (NX, NY)
+            B = background_series[i]  # (NX, NY)
 
             A01 = _norm01(A, info_lo, info_hi, gamma=gamma)
-            B01 = _norm01(B, fluid_lo, fluid_hi, gamma=gamma)
+            B01 = _norm01(B, background_lo, background_hi, gamma=gamma)
 
             fig, ax = plt.subplots(1, 1, figsize=SINGLE_PANEL_FIGSIZE, constrained_layout=True)
 
@@ -89,7 +123,7 @@ def save_ftle_overlap_series_plots(
                 origin="lower",
                 extent=fluid_extent,
                 aspect="equal",
-                cmap="Blues",
+                cmap=background_cmap,
                 alpha=np.clip(B01.T * alpha_max, 0.0, alpha_max),
                 interpolation="nearest",
             )
@@ -118,8 +152,8 @@ def save_ftle_overlap_series_plots(
             )
 
             style_spatial_axis(ax, xlim=(0.0, float(LX)), ylim=(0.0, float(LY)))
-            set_panel_title(ax, "FTLE overlap", f"Frame {i + 1:03d} / {N:03d}")
-            add_frame_badge(ax, "Blue: fluid FTLE\nRed: info FTLE")
+            set_panel_title(ax, title, f"Frame {i + 1:03d} / {N:03d}")
+            add_frame_badge(ax, f"Background: {background_label}\nRed: info FTLE")
             add_frame_badge(ax, "Dashed box: info subdomain", loc="upper right")
 
             fig.savefig(os.path.join(outdir, f"{basename}_{i:04d}.png"), dpi=dpi)
@@ -156,12 +190,6 @@ def compute_fluid_ftle_series_matched(u, v, LX, LY, reg_piv, ftle, which="backwa
       - regional windows [k0:k1) -> fluid frames [f1:f2) using reg_piv["intervals"]
       - compute fluid FTLE on the FULL fluid grid (NX,NY) over u[f1:f2], v[f1:f2]
     """
-    if v is None:
-        raise ValueError(
-            "compute_fluid_ftle_series_matched requires vector input (u, v). "
-            "Scalar mode (v=None) is not supported by overlay_lcs.py."
-        )
-
     dt = float(ftle["dt"])  # must exist
     intervals = reg_piv["intervals"]
     k_starts  = _k_starts_from(reg_piv, ftle)
@@ -187,13 +215,29 @@ def compute_fluid_ftle_series_matched(u, v, LX, LY, reg_piv, ftle, which="backwa
     return np.stack(out, axis=0), np.asarray(spans, dtype=int), x_full, y_full
 
 
-def make_overlap_gif(reg_piv, ftle, results_dir, name, u, v, LX, LY, which="backward", duration=0.10):
-    if v is None:
-        raise ValueError(
-            "make_overlap_gif requires vector input (u, v). "
-            "Use overlay_lcs_with_flows for scalar underlying fields."
-        )
+def compute_scalar_series_matched(u, reg_piv, ftle):
+    """
+    For each info-FTLE frame, compute the mean scalar field over the matched
+    fluid-frame interval used by that FTLE window.
+    """
+    intervals = reg_piv["intervals"]
+    k_starts = _k_starts_from(reg_piv, ftle)
+    ftle_len = int(ftle["ftle_len"])
 
+    out = []
+    spans = []
+    for k0 in k_starts:
+        k1 = k0 + ftle_len
+        f1 = int(intervals[k0][0])
+        f2 = int(intervals[k1 - 1][1])
+
+        out.append(_temporal_mean_field(u[f1:f2]))
+        spans.append((f1, f2))
+
+    return np.stack(out, axis=0), np.asarray(spans, dtype=int)
+
+
+def make_overlap_gif(reg_piv, ftle, results_dir, name, u, v, LX, LY, which="backward", duration=0.10):
     # info FTLE already computed
     ftle_info = np.asarray(ftle["ftle_backward"] if which.startswith("back") else ftle["ftle_forward"])
 
@@ -204,21 +248,34 @@ def make_overlap_gif(reg_piv, ftle, results_dir, name, u, v, LX, LY, which="back
     fmax = max(e for (s, e) in reg_piv["intervals"])
     assert fmax <= u.shape[0], f"Intervals require {fmax} frames but u has {u.shape[0]}"
 
-    # ensure dt exists and matches what u,v represent
-    assert "dt" in ftle, "ftle pickle missing dt; fluid FTLE timing may be wrong"
-   
-    ftle_fluid, spans, _, _ = compute_fluid_ftle_series_matched(u, v, LX, LY, reg_piv, ftle, which=which)
+    if v is None:
+        background_series, spans = compute_scalar_series_matched(u, reg_piv, ftle)
+        background_label = "mean scalar field"
+        background_cmap = SCALAR_OVERLAY_CMAP
+        title = "Info FTLE + matched scalar field"
+    else:
+        # ensure dt exists and matches what u,v represent
+        assert "dt" in ftle, "ftle pickle missing dt; fluid FTLE timing may be wrong"
+        background_series, spans, _, _ = compute_fluid_ftle_series_matched(
+            u, v, LX, LY, reg_piv, ftle, which=which
+        )
+        background_label = "fluid FTLE"
+        background_cmap = "Blues"
+        title = "Info FTLE + fluid FTLE"
    
     # render overlap frames using plotting.py helper
     out_frames = os.path.join(results_dir, f"frames_overlap_{name}_{which}")
     save_ftle_overlap_series_plots(
-        ftle_info, ftle_fluid,
+        ftle_info, background_series,
         ftle["x"], ftle["y"],
         LX=LX, LY=LY,
         outdir=out_frames,
         basename=f"{name}_overlap",
         dpi=180,
         gamma=0.85,
+        background_label=background_label,
+        background_cmap=background_cmap,
+        title=title,
     )
 
 
@@ -226,6 +283,7 @@ def make_overlap_gif(reg_piv, ftle, results_dir, name, u, v, LX, LY, which="back
     make_gif_from_dir(out_frames, out_gif, duration=duration)
     
     print(out_gif)
+    return out_gif
 
 
 if __name__ == "__main__":

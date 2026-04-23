@@ -312,6 +312,34 @@ def _info_axes_from_centers_xy(reg_piv):
     return x_info, y_info, extent_info, dx_info, dy_info
 
 
+def _finite_percentile_limits(field, low=5, high=95):
+    """Return robust percentile limits using only finite values."""
+    values = np.asarray(field, dtype=np.float64)
+    values = values[np.isfinite(values)]
+    if values.size == 0:
+        return 0.0, 1.0
+
+    lo = float(np.percentile(values, low))
+    hi = float(np.percentile(values, high))
+    if hi <= lo:
+        hi = lo + 1e-12
+    return lo, hi
+
+
+def _temporal_mean_field(field_slice):
+    """Compute a time mean while tolerating NaNs in scalar fields."""
+    data = np.asarray(field_slice, dtype=np.float64)
+    if not np.isnan(data).any():
+        return data.mean(axis=0)
+
+    valid = np.isfinite(data)
+    counts = valid.sum(axis=0)
+    summed = np.where(valid, data, 0.0).sum(axis=0)
+    out = np.full(data.shape[1:], np.nan, dtype=np.float64)
+    np.divide(summed, counts, out=out, where=counts > 0)
+    return out
+
+
 def divergence_info_feild(
     reg_piv, results_dir, name,
     u, v, LX, LY, dt,
@@ -329,11 +357,11 @@ def divergence_info_feild(
 ):
     """
     GIF over REGIONAL PIV windows k:
-      - Background: mean fluid speed over reg window [s:e) on full domain
+      - Vector mode: mean fluid speed over reg window [s:e) + mean-flow quiver
+      - Scalar mode: mean scalar field over reg window [s:e)
       - Overlay: divergence of info velocity on info subdomain
-      - Quiver: mean fluid velocity (decimated) in tab:orange (like our FTLE overlay style)
 
-    Also prints a divergence-of-mean-flow diagnostic.
+    Also prints a divergence-of-mean-flow diagnostic in vector mode.
     """
 
     os.makedirs(results_dir, exist_ok=True)
@@ -341,7 +369,10 @@ def divergence_info_feild(
         outdir = os.path.join(results_dir, f"frames_div_info_{name}")
     os.makedirs(outdir, exist_ok=True)
     if title_prefix is None:
-        title_prefix = f"{name}: div(info) over mean flow"
+        if v is None:
+            title_prefix = f"{name}: div(info) over mean scalar field"
+        else:
+            title_prefix = f"{name}: div(info) over mean flow"
 
     # info velocity snapshots (K,out_nx,out_ny,2) in "velocity" units
     move_grid = np.asarray(reg_piv["move_grid"], dtype=float)
@@ -355,10 +386,14 @@ def divergence_info_feild(
     # info grid extent + spacing
     x_info, y_info, extent_info, dx_info, dy_info = _info_axes_from_centers_xy(reg_piv)
 
-    # full fluid grid spacing
+    # full-domain grid geometry
     NX, NY = u.shape[1], u.shape[2]
-    dx_flow = float(LX / (NX - 1))
-    dy_flow = float(LY / (NY - 1))
+    xq = np.linspace(0.0, LX, NX)
+    yq = np.linspace(0.0, LY, NY)
+    Xq, Yq = np.meshgrid(xq, yq, indexing="ij")
+    if v is not None:
+        dx_flow = float(LX / (NX - 1))
+        dy_flow = float(LY / (NY - 1))
 
     # precompute global div scale to avoid flicker (like our consistent look)
     if global_div_limits:
@@ -385,19 +420,25 @@ def divergence_info_feild(
             s, e = intervals[k]
             s = int(s); e = int(e)
 
-            u_mean = np.asarray(u[s:e].mean(axis=0), dtype=np.float64)
-            v_mean = np.asarray(v[s:e].mean(axis=0), dtype=np.float64)
-            speed  = np.sqrt(u_mean**2 + v_mean**2)
+            if v is None:
+                background = _temporal_mean_field(u[s:e])
+                background_cmap = SCALAR_OVERLAY_CMAP if cmap == "Greys" else cmap
+                background_label = "Mean scalar field"
+            else:
+                u_mean = _temporal_mean_field(u[s:e])
+                v_mean = _temporal_mean_field(v[s:e])
+                background = np.sqrt(u_mean**2 + v_mean**2)
+                background_cmap = cmap
+                background_label = "Mean fluid speed"
 
-            div_flow = _divergence_2d(u_mean, v_mean, dx_flow, dy_flow)
-            flow_rms.append(float(np.sqrt(np.mean(div_flow**2))))
-            flow_max.append(float(np.max(np.abs(div_flow))))
+                div_flow = _divergence_2d(u_mean, v_mean, dx_flow, dy_flow)
+                flow_rms.append(float(np.sqrt(np.mean(div_flow**2))))
+                flow_max.append(float(np.max(np.abs(div_flow))))
 
             Vk = V_info[k]
             div_info = _divergence_2d(Vk[..., 0], Vk[..., 1], dx_info, dy_info)
 
-            vmin_bg = np.percentile(speed, 5)
-            vmax_bg = np.percentile(speed, 95)
+            vmin_bg, vmax_bg = _finite_percentile_limits(background, 5, 95)
 
             if div_limit is None:
                 lim_k = float(np.percentile(np.abs(div_info), div_pct))
@@ -408,12 +449,12 @@ def divergence_info_feild(
             fig, ax = plt.subplots(1, 1, figsize=SINGLE_PANEL_FIGSIZE, constrained_layout=True)
 
             ax.imshow(
-                speed.T,
+                background.T,
                 origin="lower",
                 extent=extent_full,
                 aspect="equal",
-                cmap=cmap,
-                alpha=0.34,
+                cmap=background_cmap,
+                alpha=0.42 if v is None else 0.34,
                 vmin=vmin_bg,
                 vmax=vmax_bg,
             )
@@ -432,35 +473,36 @@ def divergence_info_feild(
             cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
             style_colorbar(cbar, r"$\nabla \cdot v_{\mathrm{info}}$")
 
-            qs = max(1, int(qskip))
-            xq = np.linspace(0.0, LX, NX)
-            yq = np.linspace(0.0, LY, NY)
-            Xq, Yq = np.meshgrid(xq, yq, indexing="ij")
-
-            ax.quiver(
-                Xq[::qs, ::qs], Yq[::qs, ::qs],
-                u_mean[::qs, ::qs], v_mean[::qs, ::qs],
-                angles="xy",
-                scale_units="xy",
-                scale=None,
-                width=0.0032,
-                color=FLOW_VECTOR_COLOR,
-                alpha=0.90,
-            )
+            if v is not None:
+                qs = max(1, int(qskip))
+                ax.quiver(
+                    Xq[::qs, ::qs], Yq[::qs, ::qs],
+                    u_mean[::qs, ::qs], v_mean[::qs, ::qs],
+                    angles="xy",
+                    scale_units="xy",
+                    scale=None,
+                    width=0.0032,
+                    color=FLOW_VECTOR_COLOR,
+                    alpha=0.90,
+                )
 
             style_spatial_axis(ax, xlim=(0.0, float(LX)), ylim=(0.0, float(LY)))
             set_panel_title(ax, title_prefix, f"Frame {frame_idx + 1:03d}")
-            add_frame_badge(ax, f"Window {k:03d}\nFrames [{s}, {e})")
+            add_frame_badge(ax, f"{background_label}\nWindow {k:03d}\nFrames [{s}, {e})")
 
             fig.savefig(os.path.join(outdir, f"frame_{frame_idx:04d}.png"), dpi=dpi)
             plt.close(fig)
             frame_idx += 1
 
-    print(f"[div(mean flow)] mean RMS: {np.mean(flow_rms):.3e}")
-    print(f"[div(mean flow)] max  RMS: {np.max(flow_rms):.3e}")
-    print(f"[div(mean flow)] max |div|: {np.max(flow_max):.3e}")
+    if v is not None:
+        print(f"[div(mean flow)] mean RMS: {np.mean(flow_rms):.3e}")
+        print(f"[div(mean flow)] max  RMS: {np.max(flow_rms):.3e}")
+        print(f"[div(mean flow)] max |div|: {np.max(flow_max):.3e}")
+    else:
+        print("[div(mean scalar)] scalar mode: skipped mean-flow divergence diagnostics.")
 
-    gif_path = os.path.join(results_dir, f"{name}_div_info_over_mean_flow.gif")
+    gif_suffix = "mean_scalar" if v is None else "mean_flow"
+    gif_path = os.path.join(results_dir, f"{name}_div_info_over_{gif_suffix}.gif")
     make_gif_from_dir(outdir, gif_path, duration=duration)
     return gif_path
 

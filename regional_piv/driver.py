@@ -14,7 +14,7 @@ from lcs import (
     compute_ftle_series_from_optimal_direction,
     save_ftle_series_plots,
 )
-from plotting import make_gif_from_dir, overlay_lcs_with_flows
+from plotting import make_gif_from_dir, overlay_lcs_with_flows, divergence_info_feild
 from overlay_lcs import make_overlap_gif
 
 
@@ -105,6 +105,7 @@ def run_flow_case(
       - computing regional PIV sensor directions
       - computing an FTLE time series
       - saving FTLE PNGs and a GIF
+      - exporting overlay and divergence diagnostics
 
     name    : short string, e.g. "kolmogorov", "moving_vortex", "double_gyre"
     u       : array (T, nx, ny)  (vector u-component OR scalar field if v is None)
@@ -226,12 +227,29 @@ def run_flow_case(
         duration=0.10,
     )
 
-    gif_path = make_overlap_gif(
-        reg_piv=reg_piv, ftle=ftle_payload,
+    print(f"[{name}] Saving divergence diagnostics...", flush=True)
+    divergence_info_feild(
+        reg_piv=reg_piv,
         results_dir=outdir,
         name=name,
-        u=u, v=v,
-        LX=LX, LY=LY,
+        u=u,
+        v=v,
+        LX=LX,
+        LY=LY,
+        dt=DT,
+        duration=0.10,
+    )
+
+    print(f"[{name}] Saving FTLE overlap GIF...", flush=True)
+    make_overlap_gif(
+        reg_piv=reg_piv,
+        ftle=ftle_payload,
+        results_dir=outdir,
+        name=name,
+        u=u,
+        v=v,
+        LX=LX,
+        LY=LY,
         which="backward",   # or "forward"
         duration=0.10,
     )
@@ -241,7 +259,6 @@ def run_flow_case(
 
 
 if __name__ == "__main__":
-    """
     # 1) Moving vortex 
     NX_mv, NY_mv = 900, 900
     LX_mv, LY_mv = 1.0, 1.0
@@ -333,7 +350,7 @@ if __name__ == "__main__":
         out_nx=NX_dg // 3,
         out_ny=NY_dg // 3,
     )
-    """
+    
     # 4) OISST SST scalar field
     SST_PATH  = "sst.wkmean.1990-present.nc"
     MASK_PATH = "lsmask.nc"
