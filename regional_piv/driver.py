@@ -14,7 +14,14 @@ from lcs import (
     compute_ftle_series_from_optimal_direction,
     save_ftle_series_plots,
 )
-from plotting import make_gif_from_dir, overlay_lcs_with_flows, divergence_info_feild
+from plotting import (
+    make_gif_from_dir,
+    overlay_lcs_with_flows,
+    divergence_info_feild,
+    dual_lcs_overlay_gif,
+    flow_cosine_similarity_gif,
+    fluid_vs_regional_flow_gif,
+)
 from overlay_lcs import make_overlap_gif
 
 
@@ -105,7 +112,7 @@ def run_flow_case(
       - computing regional PIV sensor directions
       - computing an FTLE time series
       - saving FTLE PNGs and a GIF
-      - exporting overlay and divergence diagnostics
+      - exporting overlay, comparison, and divergence diagnostics
 
     name    : short string, e.g. "kolmogorov", "moving_vortex", "double_gyre"
     u       : array (T, nx, ny)  (vector u-component OR scalar field if v is None)
@@ -227,6 +234,35 @@ def run_flow_case(
         duration=0.10,
     )
 
+    if v is not None:
+        print(f"[{name}] Saving fluid-vs-regional flow GIF...", flush=True)
+        fluid_vs_regional_flow_gif(
+            reg_piv=reg_piv,
+            results_dir=outdir,
+            name=name,
+            u=u,
+            v=v,
+            LX=LX,
+            LY=LY,
+            dt=DT,
+            duration=0.10,
+        )
+
+        print(f"[{name}] Saving flow cosine-similarity GIF...", flush=True)
+        flow_cosine_similarity_gif(
+            reg_piv=reg_piv,
+            results_dir=outdir,
+            name=name,
+            u=u,
+            v=v,
+            LX=LX,
+            LY=LY,
+            dt=DT,
+            duration=0.10,
+        )
+    else:
+        print(f"[{name}] Scalar mode: skipping vector flow-comparison GIFs.", flush=True)
+
     print(f"[{name}] Saving divergence diagnostics...", flush=True)
     divergence_info_feild(
         reg_piv=reg_piv,
@@ -237,6 +273,20 @@ def run_flow_case(
         LX=LX,
         LY=LY,
         dt=DT,
+        duration=0.10,
+    )
+
+    print(f"[{name}] Saving dual-LCS overlay GIF...", flush=True)
+    dual_lcs_overlay_gif(
+        reg_piv=reg_piv,
+        ftle=ftle_payload,
+        results_dir=outdir,
+        name=name,
+        u=u,
+        v=v,
+        LX=LX,
+        LY=LY,
+        ridge_pct=92,
         duration=0.10,
     )
 
@@ -260,7 +310,7 @@ def run_flow_case(
 
 if __name__ == "__main__":
     # 1) Moving vortex 
-    NX_mv, NY_mv = 900, 900
+    NX_mv, NY_mv = 300, 300
     LX_mv, LY_mv = 1.0, 1.0
     DT_mv = 1.0  # or whatever makes sense for this synthetic data
 
@@ -281,7 +331,7 @@ if __name__ == "__main__":
         out_nx=NX_mv // 3,
         out_ny=NY_mv // 3,
     )
-
+    """
     # 2) Kolmogorov flow 
     NX_k, NY_k = 900, 900
     LX_k, LY_k = 2 * np.pi, 2 * np.pi
@@ -375,3 +425,4 @@ if __name__ == "__main__":
     )
 
     print("All flow cases completed.")
+    """
