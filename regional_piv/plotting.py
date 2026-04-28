@@ -64,7 +64,7 @@ def _k_starts_from(reg_piv, ftle):
 
 
 def mean_info_flow_for_idx(reg_piv, ftle, idx):
-    """Mean regional-PIV/info velocity over the FTLE integration window idx."""
+    """Mean info-flow velocity over the FTLE integration window idx."""
     move_series = np.asarray(reg_piv["move_series"])          # (K, M, 2)
     out_nx = int(reg_piv["meta"]["centers_nx"])
     out_ny = int(reg_piv["meta"]["centers_ny"])
@@ -72,7 +72,7 @@ def mean_info_flow_for_idx(reg_piv, ftle, idx):
     dt = float(ftle.get("dt", 1.0))
     tau = W * dt                                          # MUST match our FTLE code
 
-    # regional PIV interval used for LCS
+    # info-flow interval used for LCS
     k_starts = _k_starts_from(reg_piv, ftle)
     k0 = k_starts[idx]
     k1 = k0 + int(ftle["ftle_len"])
@@ -146,7 +146,7 @@ def render_overlay_frames(
             vmin = np.percentile(ftle_field, 5)
             vmax = np.percentile(ftle_field, 95)
 
-            Vmean, meta = V_provider(idx)
+            Vmean, _ = V_provider(idx)
             Vmean = np.asarray(Vmean)
 
             fig, ax = plt.subplots(1, 1, figsize=SINGLE_PANEL_FIGSIZE, constrained_layout=True)
@@ -235,8 +235,8 @@ def render_overlay_frames(
                 )
 
             style_spatial_axis(ax, xlim=(0.0, float(LX)), ylim=(0.0, float(LY)))
-            set_panel_title(ax, title_prefix, f"Frame {idx + 1:03d} / {N:03d}")
-            add_frame_badge(ax, str(meta))
+            set_panel_title(ax, title_prefix)
+            add_frame_badge(ax, "White contour: LCS ridge")
 
             fig.savefig(os.path.join(outdir, f"frame_{idx:04d}.png"), dpi=dpi)
             plt.close(fig)
@@ -255,7 +255,7 @@ def overlay_lcs_with_flows(reg_piv, ftle, results_dir, name, u, v, LX, LY,
         ftle_series = np.asarray(ftle["ftle_forward"])
         lcs_label = "Forward FTLE"
 
-    # 1) FTLE + mean info flow (regional PIV) 
+    # 1) FTLE + mean info flow
     outdir_info = os.path.join(results_dir, f"gif_frames_{name}_info")
     def info_provider(idx):
         Vmean, (k0, k1) = mean_info_flow_for_idx(reg_piv, ftle, idx)
@@ -423,7 +423,7 @@ def _sample_uniform_field_on_axes(field, x_sample, y_sample, LX, LY):
 
 
 def _add_info_domain_outline(axis, extent_info, *, edgecolor=INFO_VECTOR_COLOR, alpha=0.9):
-    """Draw the regional-PIV subdomain outline on one axis."""
+    """Draw the info-flow subdomain outline on one axis."""
     axis.add_patch(
         Rectangle(
             (extent_info[0], extent_info[2]),
@@ -438,6 +438,28 @@ def _add_info_domain_outline(axis, extent_info, *, edgecolor=INFO_VECTOR_COLOR, 
     )
 
 
+def _resolve_quiver_stride(nx, ny, *, qskip=None, target_vectors=30):
+    """Choose a stride that keeps quiver density near one target count per axis."""
+    if qskip is not None:
+        return max(1, int(qskip))
+
+    target = max(1, int(target_vectors))
+    return max(1, int(np.ceil(max(nx, ny) / target)))
+
+
+def _cell_edges_from_centers(coords):
+    """Convert 1D cell centers into cell-edge coordinates for pcolormesh."""
+    coords = np.asarray(coords, dtype=np.float64)
+    if coords.size == 1:
+        delta = 1.0
+        return np.array([coords[0] - 0.5 * delta, coords[0] + 0.5 * delta], dtype=np.float64)
+
+    mids = 0.5 * (coords[:-1] + coords[1:])
+    left = coords[0] - 0.5 * (coords[1] - coords[0])
+    right = coords[-1] + 0.5 * (coords[-1] - coords[-2])
+    return np.concatenate([[left], mids, [right]])
+
+
 def fluid_vs_regional_flow_gif(
     reg_piv,
     results_dir,
@@ -450,16 +472,17 @@ def fluid_vs_regional_flow_gif(
     outdir=None,
     title_prefix=None,
     stride=1,
-    fluid_qskip=12,
-    info_qskip=1,
+    fluid_qskip=None,
+    info_qskip=None,
+    target_vectors=30,
     dpi=180,
     duration=0.10,
 ):
     """
-    Save a side-by-side GIF comparing the mean fluid flow and regional-PIV flow.
+    Save a side-by-side GIF comparing the mean fluid flow and mean info flow.
     """
     if v is None:
-        print(f"[{name}] Scalar mode: skipping fluid-vs-regional flow comparison GIF.")
+        print(f"[{name}] Scalar mode: skipping fluid-vs-info-flow comparison GIF.")
         return None
 
     os.makedirs(results_dir, exist_ok=True)
@@ -467,7 +490,7 @@ def fluid_vs_regional_flow_gif(
         outdir = os.path.join(results_dir, f"frames_flow_compare_{name}")
     os.makedirs(outdir, exist_ok=True)
     if title_prefix is None:
-        title_prefix = f"{name}: fluid flow vs regional PIV flow"
+        title_prefix = f"{name}: fluid flow vs info flow"
 
     move_grid = np.asarray(reg_piv["move_grid"], dtype=np.float64)
     intervals = reg_piv["intervals"]
@@ -528,7 +551,12 @@ def fluid_vs_regional_flow_gif(
                 frac=0.055,
                 domain_span=(LX, LY),
             )
-            qs_fluid = max(1, int(fluid_qskip))
+            qs_fluid = _resolve_quiver_stride(
+                V_fluid_plot.shape[0],
+                V_fluid_plot.shape[1],
+                qskip=fluid_qskip,
+                target_vectors=target_vectors,
+            )
             axes[0].quiver(
                 X_full[::qs_fluid, ::qs_fluid],
                 Y_full[::qs_fluid, ::qs_fluid],
@@ -541,8 +569,8 @@ def fluid_vs_regional_flow_gif(
                 color=FLOW_VECTOR_COLOR,
                 alpha=0.92,
             )
-            set_panel_title(axes[0], "Mean fluid flow", f"Window {k:03d}")
-            add_frame_badge(axes[0], f"Frames [{s}, {e})")
+            set_panel_title(axes[0], "Mean fluid flow")
+            add_frame_badge(axes[0], "Dashed box: info-flow domain")
 
             V_regional_plot = _normalize_for_display(
                 V_regional,
@@ -551,7 +579,12 @@ def fluid_vs_regional_flow_gif(
                 frac=0.055,
                 domain_span=(LX, LY),
             )
-            qs_info = max(1, int(info_qskip))
+            qs_info = _resolve_quiver_stride(
+                V_regional_plot.shape[0],
+                V_regional_plot.shape[1],
+                qskip=info_qskip,
+                target_vectors=target_vectors,
+            )
             axes[1].quiver(
                 X_info[::qs_info, ::qs_info],
                 Y_info[::qs_info, ::qs_info],
@@ -564,15 +597,15 @@ def fluid_vs_regional_flow_gif(
                 color=INFO_VECTOR_COLOR,
                 alpha=0.95,
             )
-            set_panel_title(axes[1], "Regional PIV flow", f"Window {k:03d}")
-            add_frame_badge(axes[1], "Dashed box: regional domain")
+            set_panel_title(axes[1], "Mean info flow")
+            add_frame_badge(axes[1], f"Quiver density matched to fluid view")
 
-            fig.suptitle(title_prefix, x=0.06, ha="left", color="#1F2937", fontsize=18, fontweight="semibold")
+            fig.suptitle(title_prefix, x=0.06, ha="left", color="#1F2937")
             fig.savefig(os.path.join(outdir, f"frame_{frame_idx:04d}.png"), dpi=dpi)
             plt.close(fig)
             frame_idx += 1
 
-    gif_path = os.path.join(results_dir, f"{name}_fluid_vs_regional_piv.gif")
+    gif_path = os.path.join(results_dir, f"{name}_fluid_vs_info_flow.gif")
     make_gif_from_dir(outdir, gif_path, duration=duration)
     return gif_path
 
@@ -593,11 +626,14 @@ def flow_cosine_similarity_gif(
     duration=0.10,
 ):
     """
-    Save a GIF of pointwise cosine similarity between interpolated fluid flow and
-    regional-PIV flow on the regional-PIV grid.
+    Save a GIF of pointwise direction cosine similarity on the info-flow grid.
+
+    At each info-flow grid point, this bilinearly samples the fluid velocity,
+    normalizes both vectors to directions, and plots their cosine similarity as
+    a scalar heat map on the info-flow grid.
     """
     if v is None:
-        print(f"[{name}] Scalar mode: skipping flow cosine-similarity GIF.")
+        print(f"[{name}] Scalar mode: skipping flow direction cosine-similarity GIF.")
         return None
 
     os.makedirs(results_dir, exist_ok=True)
@@ -605,7 +641,7 @@ def flow_cosine_similarity_gif(
         outdir = os.path.join(results_dir, f"frames_flow_cosine_{name}")
     os.makedirs(outdir, exist_ok=True)
     if title_prefix is None:
-        title_prefix = f"{name}: fluid / regional-PIV cosine similarity"
+        title_prefix = f"{name}: fluid vs info-flow direction cosine similarity"
 
     move_grid = np.asarray(reg_piv["move_grid"], dtype=np.float64)
     intervals = reg_piv["intervals"]
@@ -614,7 +650,8 @@ def flow_cosine_similarity_gif(
     V_info = move_grid / max(tau, 1e-12)
 
     x_info, y_info, extent_info, _, _ = _info_axes_from_centers_xy(reg_piv)
-    X_info, Y_info = np.meshgrid(x_info, y_info, indexing="ij")
+    x_info_edges = _cell_edges_from_centers(x_info)
+    y_info_edges = _cell_edges_from_centers(y_info)
     extent_full = (0.0, float(LX), 0.0, float(LY))
 
     speed_limit_pairs = []
@@ -640,24 +677,17 @@ def flow_cosine_similarity_gif(
             V_regional = V_info[k]
             V_fluid_on_info = _sample_uniform_field_on_axes(V_fluid, x_info, y_info, LX, LY)
 
-            dot = np.sum(V_fluid_on_info * V_regional, axis=-1)
             fluid_mag = np.linalg.norm(V_fluid_on_info, axis=-1)
             info_mag = np.linalg.norm(V_regional, axis=-1)
-            denom = fluid_mag * info_mag
+            valid = (fluid_mag > 1e-12) & (info_mag > 1e-12)
 
-            cosine = np.full_like(dot, np.nan, dtype=np.float64)
-            valid = denom > 1e-12
-            cosine[valid] = np.clip(dot[valid] / denom[valid], -1.0, 1.0)
-
-            strength = np.minimum(fluid_mag, info_mag)
-            alpha_map = np.zeros_like(strength, dtype=np.float64)
+            cosine = np.full(fluid_mag.shape, np.nan, dtype=np.float64)
             if np.any(valid):
-                strength_lo, strength_hi = _finite_percentile_limits(strength[valid], 10, 95)
-                alpha_map[valid] = np.clip(
-                    (strength[valid] - strength_lo) / max(strength_hi - strength_lo, 1e-12),
-                    0.15,
-                    1.0,
-                )
+                fluid_dir = np.zeros_like(V_fluid_on_info, dtype=np.float64)
+                info_dir = np.zeros_like(V_regional, dtype=np.float64)
+                fluid_dir[valid] = V_fluid_on_info[valid] / fluid_mag[valid, None]
+                info_dir[valid] = V_regional[valid] / info_mag[valid, None]
+                cosine[valid] = np.clip(np.sum(fluid_dir[valid] * info_dir[valid], axis=-1), -1.0, 1.0)
 
             fig, ax = plt.subplots(1, 1, figsize=SINGLE_PANEL_FIGSIZE, constrained_layout=True)
             ax.imshow(
@@ -672,40 +702,20 @@ def flow_cosine_similarity_gif(
             )
 
             norm = TwoSlopeNorm(vmin=-1.0, vcenter=0.0, vmax=1.0)
-            im = ax.imshow(
-                cosine.T,
-                origin="lower",
-                extent=extent_info,
-                aspect="equal",
+            im = ax.pcolormesh(
+                x_info_edges,
+                y_info_edges,
+                np.ma.masked_invalid(cosine).T,
                 cmap=COSINE_SIMILARITY_CMAP,
                 norm=norm,
-                alpha=0.82 * alpha_map.T,
+                shading="flat",
+                alpha=0.92,
             )
-
-            if np.any(valid):
-                try:
-                    ax.contour(
-                        X_info,
-                        Y_info,
-                        cosine,
-                        levels=[0.0, 0.8],
-                        colors=["#F59E0B", "#0F172A"],
-                        linewidths=[0.9, 1.1],
-                        alpha=0.75,
-                    )
-                except ValueError:
-                    pass
 
             _add_info_domain_outline(ax, extent_info, edgecolor=INFO_LINE_COLOR)
             style_spatial_axis(ax, xlim=(0.0, float(LX)), ylim=(0.0, float(LY)))
-            set_panel_title(ax, title_prefix, f"Window {k:03d}")
-
-            mean_cos = float(np.nanmean(cosine)) if np.any(valid) else float("nan")
-            coverage = 100.0 * float(np.mean(valid))
-            add_frame_badge(
-                ax,
-                f"Frames [{s}, {e})\nMean cos = {mean_cos:.3f}\nValid area = {coverage:.1f}%",
-            )
+            set_panel_title(ax, title_prefix)
+            add_frame_badge(ax, "Heat map evaluated on the info-flow grid")
 
             cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
             style_colorbar(cbar, r"$\cos(\theta)$")
@@ -785,7 +795,7 @@ def dual_lcs_overlay_gif(
 
     with presentation_plot_context():
         for idx in range(N):
-            background, meta = mean_fluid_flow_for_idx(u, v, LX, LY, reg_piv, ftle, idx)
+            background, _ = mean_fluid_flow_for_idx(u, v, LX, LY, reg_piv, ftle, idx)
             if background.ndim == 3:
                 background_field = np.linalg.norm(background, axis=-1)
             else:
@@ -867,8 +877,7 @@ def dual_lcs_overlay_gif(
                 )
 
             style_spatial_axis(ax, xlim=(0.0, float(LX)), ylim=(0.0, float(LY)))
-            set_panel_title(ax, title_prefix, f"Frame {idx + 1:03d} / {N:03d}")
-            add_frame_badge(ax, f"Frames {meta}\nP{ridge_pct} thresholds")
+            set_panel_title(ax, title_prefix)
             finalize_legend(ax, handles=legend_handles, loc="lower right")
 
             fig.savefig(os.path.join(outdir, f"frame_{idx:04d}.png"), dpi=dpi)
@@ -1027,8 +1036,8 @@ def divergence_info_feild(
                 )
 
             style_spatial_axis(ax, xlim=(0.0, float(LX)), ylim=(0.0, float(LY)))
-            set_panel_title(ax, title_prefix, f"Frame {frame_idx + 1:03d}")
-            add_frame_badge(ax, f"{background_label}\nWindow {k:03d}\nFrames [{s}, {e})")
+            set_panel_title(ax, title_prefix)
+            add_frame_badge(ax, f"Background: {background_label}")
 
             fig.savefig(os.path.join(outdir, f"frame_{frame_idx:04d}.png"), dpi=dpi)
             plt.close(fig)

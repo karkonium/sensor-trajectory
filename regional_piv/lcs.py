@@ -58,11 +58,7 @@ def quiver_row(
                 alpha=0.95,
             )
             style_spatial_axis(ax, xlim=xlim, ylim=ylim)
-            if "intervals" in res:
-                s, e = res["intervals"][k]
-                set_panel_title(ax, f"Window {k:03d}", f"Frames [{s}, {e})")
-            else:
-                set_panel_title(ax, f"Window {k:03d}")
+            set_panel_title(ax, "Info flow snapshot")
 
         if outdir is not None:
             os.makedirs(outdir, exist_ok=True)
@@ -415,8 +411,6 @@ def save_ftle_series_plots(
         for idx in range(N):
             ftle_fwd = ftle_fwd_series[idx]
             ftle_bwd = ftle_bwd_series[idx]
-            t = t_centers[idx]
-
             fig, axes = plt.subplots(1, 2, figsize=WIDE_PANEL_FIGSIZE, constrained_layout=True)
 
             im0 = axes[0].imshow(
@@ -429,7 +423,7 @@ def save_ftle_series_plots(
                 vmax=ftle_hi,
             )
             style_spatial_axis(axes[0], xlim=(-px, lx + px), ylim=(-py, ly + py))
-            set_panel_title(axes[0], "Forward FTLE", f"Repelling structures | t = {t:.3f}")
+            set_panel_title(axes[0], "Forward FTLE")
             cbar0 = fig.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
             style_colorbar(cbar0, "FTLE")
 
@@ -443,7 +437,7 @@ def save_ftle_series_plots(
                 vmax=ftle_hi,
             )
             style_spatial_axis(axes[1], xlim=(-px, lx + px), ylim=(-py, ly + py))
-            set_panel_title(axes[1], "Backward FTLE", f"Attracting structures | t = {t:.3f}")
+            set_panel_title(axes[1], "Backward FTLE")
             cbar1 = fig.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
             style_colorbar(cbar1, "FTLE")
 
@@ -452,7 +446,7 @@ def save_ftle_series_plots(
             Xg, Yg = np.meshgrid(x, y, indexing="ij")
             axes[0].contour(Xg, Yg, ftle_fwd, levels=[th_f], colors=RIDGE_COLOR, linewidths=1.4)
             axes[1].contour(Xg, Yg, ftle_bwd, levels=[th_b], colors=RIDGE_COLOR, linewidths=1.4)
-            add_frame_badge(axes[0], f"Frame {idx + 1:03d} / {N:03d}")
+            add_frame_badge(axes[0], "White contour: LCS ridge")
 
             fname = f"{basename}_{idx:04d}.png"
             fig.savefig(os.path.join(outdir, fname), dpi=dpi)

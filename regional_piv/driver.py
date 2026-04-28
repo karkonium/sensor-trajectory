@@ -235,7 +235,7 @@ def run_flow_case(
     )
 
     if v is not None:
-        print(f"[{name}] Saving fluid-vs-regional flow GIF...", flush=True)
+        print(f"[{name}] Saving fluid-vs-info-flow GIF...", flush=True)
         fluid_vs_regional_flow_gif(
             reg_piv=reg_piv,
             results_dir=outdir,
@@ -248,7 +248,7 @@ def run_flow_case(
             duration=0.10,
         )
 
-        print(f"[{name}] Saving flow cosine-similarity GIF...", flush=True)
+        print(f"[{name}] Saving flow direction cosine-similarity GIF...", flush=True)
         flow_cosine_similarity_gif(
             reg_piv=reg_piv,
             results_dir=outdir,
@@ -309,6 +309,7 @@ def run_flow_case(
 
 
 if __name__ == "__main__":
+    """
     # 1) Moving vortex 
     NX_mv, NY_mv = 300, 300
     LX_mv, LY_mv = 1.0, 1.0
@@ -333,18 +334,18 @@ if __name__ == "__main__":
     )
     """
     # 2) Kolmogorov flow 
-    NX_k, NY_k = 900, 900
+    NX_k, NY_k = 300, 300
     LX_k, LY_k = 2 * np.pi, 2 * np.pi
-    DT_base = 1e-4
+    DT_base = 1e-3
 
     u_full, v_full = generate_cfd_kolmogorov_flow(
-        n_timesteps=20000,
+        n_timesteps=2000,
         nx=NX_k, ny=NY_k,
         lx=LX_k, ly=LY_k,
         dt=DT_base,
         nu=2e-2,
         forcing_amp=20.0,
-        kf=10,
+        kf=4,
         plot_series=False,
     )
 
@@ -375,9 +376,9 @@ if __name__ == "__main__":
         out_ny=NY_k // 3,
     )
 
-
+    """
     # 3) Double gyre 
-    NX_dg, NY_dg = 900, 450
+    NX_dg, NY_dg = 300, 150
     LX_dg, LY_dg = 2.0, 1.0
     DT_dg = 1.0
 
@@ -400,7 +401,7 @@ if __name__ == "__main__":
         out_nx=NX_dg // 3,
         out_ny=NY_dg // 3,
     )
-    
+    """
     # 4) OISST SST scalar field
     SST_PATH  = "sst.wkmean.1990-present.nc"
     MASK_PATH = "lsmask.nc"
@@ -425,4 +426,3 @@ if __name__ == "__main__":
     )
 
     print("All flow cases completed.")
-    """

@@ -1,4 +1,4 @@
-"""Shared presentation-style Matplotlib helpers for regional PIV visuals."""
+"""Shared presentation-style Matplotlib helpers for info-flow visuals."""
 
 from contextlib import contextmanager
 
@@ -32,50 +32,50 @@ SINGLE_PANEL_FIGSIZE = (8.8, 6.2)
 WIDE_PANEL_FIGSIZE = (13.4, 5.9)
 
 PRESENTATION_RC_PARAMS = {
-    "font.family": "DejaVu Sans",
-    "mathtext.fontset": "stixsans",
-    "font.size": 15,
-    "axes.titlesize": 18,
-    "axes.titleweight": "semibold",
-    "axes.labelsize": 16,
+    "text.usetex": True,
+    "text.latex.preamble": r"\usepackage{lmodern}",
+    "font.family": "lmodern",
+    "font.size": 14,
+    "axes.titlesize": 16,
+    "axes.labelsize": 15,
     "axes.labelcolor": TEXT_COLOR,
     "axes.titlecolor": TEXT_COLOR,
     "axes.facecolor": PANEL_FACE_COLOR,
     "axes.edgecolor": SPINE_COLOR,
-    "axes.linewidth": 1.0,
+    "axes.linewidth": 0.9,
     "axes.axisbelow": True,
     "axes.spines.top": False,
     "axes.spines.right": False,
-    "axes.titlepad": 10.0,
+    "axes.titlepad": 8.0,
     "figure.facecolor": "white",
     "savefig.facecolor": "white",
     "savefig.dpi": 220,
     "savefig.bbox": "tight",
     "legend.frameon": True,
-    "legend.framealpha": 0.96,
+    "legend.framealpha": 0.95,
     "legend.edgecolor": LEGEND_EDGE_COLOR,
     "legend.fancybox": False,
-    "legend.fontsize": 12.5,
-    "legend.title_fontsize": 13,
-    "xtick.labelsize": 13.5,
-    "ytick.labelsize": 13.5,
+    "legend.fontsize": 11,
+    "legend.title_fontsize": 11,
+    "xtick.labelsize": 12,
+    "ytick.labelsize": 12,
     "xtick.color": TEXT_COLOR,
     "ytick.color": TEXT_COLOR,
-    "xtick.direction": "out",
-    "ytick.direction": "out",
-    "xtick.major.size": 5,
-    "ytick.major.size": 5,
-    "xtick.major.width": 1.0,
-    "ytick.major.width": 1.0,
+    "xtick.direction": "in",
+    "ytick.direction": "in",
+    "xtick.major.size": 4,
+    "ytick.major.size": 4,
+    "xtick.major.width": 0.9,
+    "ytick.major.width": 0.9,
     "xtick.minor.size": 2.5,
     "ytick.minor.size": 2.5,
     "xtick.minor.visible": True,
     "ytick.minor.visible": True,
     "grid.color": GRID_MAJOR_COLOR,
-    "grid.linewidth": 0.85,
-    "grid.alpha": 0.95,
-    "lines.linewidth": 2.2,
-    "lines.markersize": 6.0,
+    "grid.linewidth": 0.75,
+    "grid.alpha": 0.9,
+    "lines.linewidth": 2.0,
+    "lines.markersize": 5.0,
     "pdf.fonttype": 42,
     "ps.fonttype": 42,
 }
@@ -83,7 +83,7 @@ PRESENTATION_RC_PARAMS = {
 
 @contextmanager
 def presentation_plot_context():
-    """Temporarily apply the regional-PIV presentation plotting style."""
+    """Temporarily apply the shared presentation plotting style."""
     with plt.rc_context(PRESENTATION_RC_PARAMS):
         yield
 

@@ -323,8 +323,7 @@ def regional_local_optimal_direction_series(
                     zorder=2,
                 )
                 style_spatial_axis(ax, xlim=(0.0, float(lx)), ylim=(0.0, float(ly)))
-                set_panel_title(ax, "Regional optimal direction field", f"Window {w_idx:03d}")
-                add_frame_badge(ax, f"Frames [{s}, {e})")
+                set_panel_title(ax, "Info flow direction field")
 
                 if save_plots:
                     fname = f"window_{w_idx:04d}.png"

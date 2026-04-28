@@ -152,7 +152,7 @@ def save_ftle_overlap_series_plots(
             )
 
             style_spatial_axis(ax, xlim=(0.0, float(LX)), ylim=(0.0, float(LY)))
-            set_panel_title(ax, title, f"Frame {i + 1:03d} / {N:03d}")
+            set_panel_title(ax, title)
             add_frame_badge(ax, f"Background: {background_label}\nRed: info FTLE")
             add_frame_badge(ax, "Dashed box: info subdomain", loc="upper right")
 
