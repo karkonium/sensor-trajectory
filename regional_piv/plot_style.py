@@ -3,6 +3,7 @@
 from contextlib import contextmanager
 
 import matplotlib.pyplot as plt
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 
 TEXT_COLOR = "#1F2937"
@@ -11,20 +12,27 @@ GRID_MAJOR_COLOR = "#D0D7E2"
 GRID_MINOR_COLOR = "#E5EAF1"
 PANEL_FACE_COLOR = "#FBFCFE"
 LEGEND_EDGE_COLOR = "#D0D7E2"
+TEXT_COLOR_DARK = "#F8FAFC"
+SPINE_COLOR_DARK = "#E2E8F0"
+GRID_MAJOR_COLOR_DARK = "#334155"
+GRID_MINOR_COLOR_DARK = "#1E293B"
+PANEL_FACE_COLOR_DARK = "#000000"
+FIGURE_FACE_COLOR_DARK = "#000000"
+LEGEND_EDGE_COLOR_DARK = "#475569"
 
 FTLE_CMAP = "magma"
 DIVERGENCE_CMAP = "RdBu_r"
-SCALAR_OVERLAY_CMAP = "viridis"
-COSINE_SIMILARITY_CMAP = "RdYlBu"
+SCALAR_OVERLAY_CMAP = "cividis"
+COSINE_SIMILARITY_CMAP = DIVERGENCE_CMAP
 
 _DIVERGENCE_MAP = plt.get_cmap(DIVERGENCE_CMAP)
 CONVERGING_COLOR = _DIVERGENCE_MAP(0.14)
 DIVERGING_COLOR = _DIVERGENCE_MAP(0.86)
 
-FLOW_VECTOR_COLOR = "#111827"
-INFO_VECTOR_COLOR = "#B54708"
-FLUID_LINE_COLOR = "#264653"
-INFO_LINE_COLOR = "#B56576"
+FLOW_VECTOR_COLOR = "#F8FAFC"
+INFO_VECTOR_COLOR = "#2DD4BF"
+FLUID_LINE_COLOR = "#60A5FA"
+INFO_LINE_COLOR = "#2DD4BF"
 REFERENCE_LINE_COLOR = "#98A2B3"
 RIDGE_COLOR = "#F8FAFC"
 
@@ -80,31 +88,47 @@ PRESENTATION_RC_PARAMS = {
     "ps.fonttype": 42,
 }
 
+PRESENTATION_DARK_RC_PARAMS = PRESENTATION_RC_PARAMS.copy()
+PRESENTATION_DARK_RC_PARAMS.update(
+    {
+        "axes.labelcolor": TEXT_COLOR_DARK,
+        "axes.titlecolor": TEXT_COLOR_DARK,
+        "axes.facecolor": PANEL_FACE_COLOR_DARK,
+        "axes.edgecolor": SPINE_COLOR_DARK,
+        "figure.facecolor": FIGURE_FACE_COLOR_DARK,
+        "savefig.facecolor": FIGURE_FACE_COLOR_DARK,
+        "legend.edgecolor": LEGEND_EDGE_COLOR_DARK,
+        "xtick.color": TEXT_COLOR_DARK,
+        "ytick.color": TEXT_COLOR_DARK,
+        "grid.color": GRID_MAJOR_COLOR_DARK,
+    }
+)
+
 
 @contextmanager
 def presentation_plot_context():
     """Temporarily apply the shared presentation plotting style."""
-    with plt.rc_context(PRESENTATION_RC_PARAMS):
+    with plt.rc_context(PRESENTATION_DARK_RC_PARAMS):
         yield
 
 
 def apply_axis_style(axis, *, x_grid=False, y_grid=False):
     """Apply a clean academic presentation style to one axis."""
-    axis.set_facecolor(PANEL_FACE_COLOR)
-    axis.tick_params(width=1.0, colors=TEXT_COLOR)
+    axis.set_facecolor(PANEL_FACE_COLOR_DARK)
+    axis.tick_params(width=1.0, colors=TEXT_COLOR_DARK)
     axis.minorticks_on()
 
     axis.grid(False)
     if x_grid:
-        axis.xaxis.grid(True, which="major", color=GRID_MAJOR_COLOR, linewidth=0.85)
-        axis.xaxis.grid(True, which="minor", color=GRID_MINOR_COLOR, linewidth=0.55, alpha=0.85)
+        axis.xaxis.grid(True, which="major", color=GRID_MAJOR_COLOR_DARK, linewidth=0.85)
+        axis.xaxis.grid(True, which="minor", color=GRID_MINOR_COLOR_DARK, linewidth=0.55, alpha=0.85)
     if y_grid:
-        axis.yaxis.grid(True, which="major", color=GRID_MAJOR_COLOR, linewidth=0.85)
-        axis.yaxis.grid(True, which="minor", color=GRID_MINOR_COLOR, linewidth=0.55, alpha=0.85)
+        axis.yaxis.grid(True, which="major", color=GRID_MAJOR_COLOR_DARK, linewidth=0.85)
+        axis.yaxis.grid(True, which="minor", color=GRID_MINOR_COLOR_DARK, linewidth=0.55, alpha=0.85)
 
     for spine_name in ("left", "bottom"):
         if spine_name in axis.spines:
-            axis.spines[spine_name].set_color(SPINE_COLOR)
+            axis.spines[spine_name].set_color(SPINE_COLOR_DARK)
             axis.spines[spine_name].set_linewidth(1.0)
 
 
@@ -119,11 +143,11 @@ def style_spatial_axis(axis, *, xlim, ylim, xlabel="x", ylabel="y"):
 
 
 def set_panel_title(axis, title, subtitle=None):
-    """Set a left-aligned title with an optional subtitle line."""
+    """Set a centered title with an optional subtitle line."""
     if subtitle:
-        axis.set_title(f"{title}\n{subtitle}", loc="left")
+        axis.set_title(f"{title}\n{subtitle}", loc="center")
     else:
-        axis.set_title(title, loc="left")
+        axis.set_title(title, loc="center")
 
 
 def add_frame_badge(axis, text, *, loc="upper left"):
@@ -139,12 +163,12 @@ def add_frame_badge(axis, text, *, loc="upper left"):
         transform=axis.transAxes,
         ha=ha,
         va=va,
-        color=TEXT_COLOR,
+        color=TEXT_COLOR_DARK,
         fontsize=11.5,
         bbox={
             "boxstyle": "round,pad=0.28",
-            "facecolor": "white",
-            "edgecolor": LEGEND_EDGE_COLOR,
+            "facecolor": "#000000",
+            "edgecolor": LEGEND_EDGE_COLOR_DARK,
             "linewidth": 0.8,
             "alpha": 0.94,
         },
@@ -154,10 +178,20 @@ def add_frame_badge(axis, text, *, loc="upper left"):
 def style_colorbar(colorbar, label=None):
     """Apply consistent styling to a colorbar."""
     if label is not None:
-        colorbar.set_label(label, color=TEXT_COLOR)
-    colorbar.ax.tick_params(colors=TEXT_COLOR, width=0.9, length=4)
-    colorbar.outline.set_edgecolor(SPINE_COLOR)
+        colorbar.set_label(label, color=TEXT_COLOR_DARK)
+    colorbar.ax.tick_params(colors=TEXT_COLOR_DARK, width=0.9, length=4)
+    colorbar.ax.set_facecolor(PANEL_FACE_COLOR_DARK)
+    colorbar.outline.set_edgecolor(SPINE_COLOR_DARK)
     colorbar.outline.set_linewidth(0.8)
+
+
+def add_spatial_colorbar(fig, axis, mappable, label=None, *, size="4.5%", pad=0.10):
+    """Append a colorbar whose height matches the spatial plot axis."""
+    divider = make_axes_locatable(axis)
+    cax = divider.append_axes("right", size=size, pad=pad)
+    colorbar = fig.colorbar(mappable, cax=cax)
+    style_colorbar(colorbar, label)
+    return colorbar
 
 
 def finalize_legend(axis, **legend_kwargs):
@@ -167,7 +201,12 @@ def finalize_legend(axis, **legend_kwargs):
         return None
 
     frame = legend.get_frame()
-    frame.set_facecolor("white")
-    frame.set_edgecolor(LEGEND_EDGE_COLOR)
+    frame.set_facecolor("#000000")
+    frame.set_edgecolor(LEGEND_EDGE_COLOR_DARK)
     frame.set_linewidth(0.8)
+    for text in legend.get_texts():
+        text.set_color(TEXT_COLOR_DARK)
+    title = legend.get_title()
+    if title is not None:
+        title.set_color(TEXT_COLOR_DARK)
     return legend

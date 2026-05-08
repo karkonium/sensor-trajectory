@@ -273,6 +273,7 @@ def run_flow_case(
         LX=LX,
         LY=LY,
         dt=DT,
+        ftle=ftle_payload,
         duration=0.10,
     )
 
@@ -309,7 +310,7 @@ def run_flow_case(
 
 
 if __name__ == "__main__":
-    """
+
     # 1) Moving vortex 
     NX_mv, NY_mv = 300, 300
     LX_mv, LY_mv = 1.0, 1.0
@@ -332,7 +333,7 @@ if __name__ == "__main__":
         out_nx=NX_mv // 3,
         out_ny=NY_mv // 3,
     )
-    """
+
     # 2) Kolmogorov flow 
     NX_k, NY_k = 300, 300
     LX_k, LY_k = 2 * np.pi, 2 * np.pi
@@ -376,7 +377,7 @@ if __name__ == "__main__":
         out_ny=NY_k // 3,
     )
 
-    """
+
     # 3) Double gyre 
     NX_dg, NY_dg = 300, 150
     LX_dg, LY_dg = 2.0, 1.0
@@ -424,5 +425,6 @@ if __name__ == "__main__":
         out_nx=NX_sst // 2,
         out_ny=NY_sst // 2,
     )
+    """
 
     print("All flow cases completed.")

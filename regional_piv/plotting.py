@@ -18,11 +18,11 @@ from plot_style import (
     SCALAR_OVERLAY_CMAP,
     SINGLE_PANEL_FIGSIZE,
     WIDE_PANEL_FIGSIZE,
+    add_spatial_colorbar,
     add_frame_badge,
     finalize_legend,
     presentation_plot_context,
     set_panel_title,
-    style_colorbar,
     style_spatial_axis,
 )
 
@@ -45,6 +45,16 @@ def make_gif_from_dir(in_dir, out_gif, duration=0.1):
 
     imageio.mimsave(out_gif, frames, duration=duration)
     # print(f"[GIF] Saved: {out_gif}")
+
+
+def _clear_frame_images(outdir):
+    """Remove stale rendered frames before writing a new GIF frame set."""
+    if not os.path.isdir(outdir):
+        return
+
+    for fname in os.listdir(outdir):
+        if fname.lower().endswith((".png", ".jpg", ".jpeg")):
+            os.remove(os.path.join(outdir, fname))
 
 
 def load_pickles(results_dir, name):
@@ -109,16 +119,28 @@ def mean_fluid_flow_for_idx(u, v, LX, LY, reg_piv, ftle, idx):
     return Vmean_full, (s_frame, e_frame)
 
 
-def _normalize_for_display(V, x, y, frac=0.06, domain_span=None):
-    """Scale arrows to a fixed visible length (keeps quiver readable across frames)."""
+def _scale_vectors_for_display(V, x, y, frac=0.06, domain_span=None, reference_mag=None):
+    """Scale arrows for display while preserving vector-magnitude differences."""
     x = np.asarray(x); y = np.asarray(y)
     if domain_span is None:
         arrow_len = frac * min((x[-1] - x[0]), (y[-1] - y[0]))
     else:
         arrow_len = frac * min(float(domain_span[0]), float(domain_span[1]))
-    mag = np.linalg.norm(V, axis=-1, keepdims=True)
-    mag = np.maximum(mag, 1e-12)
-    return (V / mag) * arrow_len
+
+    mag = np.linalg.norm(V, axis=-1)
+    if reference_mag is None:
+        reference_mag = _finite_percentile(mag, 95, default=1.0)
+    reference_mag = max(float(reference_mag), 1e-12)
+    return V / reference_mag * arrow_len
+
+
+def _stable_vector_reference(refs, default=1.0):
+    """Collapse per-frame vector references into one stable positive scale."""
+    values = np.asarray(refs, dtype=np.float64)
+    values = values[np.isfinite(values) & (values > 0.0)]
+    if values.size == 0:
+        return float(default)
+    return max(float(np.median(values)), 1e-12)
 
 
 def render_overlay_frames(
@@ -175,7 +197,7 @@ def render_overlay_frames(
                     yq = np.linspace(0.0, LY, NY)
                     Xq, Yq = np.meshgrid(xq, yq, indexing="ij")
 
-                Vplot = _normalize_for_display(Vmean, xq, yq)
+                Vplot = _scale_vectors_for_display(Vmean, xq, yq)
                 Vp = Vplot[::qskip, ::qskip, :]
                 Xp = Xq[::qskip, ::qskip]
                 Yp = Yq[::qskip, ::qskip]
@@ -185,7 +207,7 @@ def render_overlay_frames(
                     Vp[..., 0], Vp[..., 1],
                     angles="xy",
                     scale_units="xy",
-                    scale=None,
+                    scale=1,
                     width=0.0032,
                     color=INFO_VECTOR_COLOR,
                     alpha=0.95,
@@ -264,7 +286,7 @@ def overlay_lcs_with_flows(reg_piv, ftle, results_dir, name, u, v, LX, LY,
         ftle_series, x, y, LX, LY,
         V_provider=info_provider,
         outdir=outdir_info,
-        title_prefix=f"{name}: {lcs_label} + mean info-flow",
+        title_prefix=f"{lcs_label} + Mean InfoFlo",
         ridge_pct=ridge_pct,
         qskip=qskip,
         cmap="Greys",
@@ -278,12 +300,12 @@ def overlay_lcs_with_flows(reg_piv, ftle, results_dir, name, u, v, LX, LY,
     def fluid_provider(idx):
         Vmean, (s, e) = mean_fluid_flow_for_idx(u, v, LX, LY, reg_piv, ftle, idx)
         return Vmean, f"frames[{s},{e})"
-    fluid_label = "mean fluid-flow" if v is not None else "mean scalar-field"
+    fluid_label = "Mean Fluid Flow" if v is not None else "Mean Scalar Field"
     render_overlay_frames(
         ftle_series, x, y, LX, LY,
         V_provider=fluid_provider,
         outdir=outdir_fluid,
-        title_prefix=f"{name}: {lcs_label} + {fluid_label}",
+        title_prefix=f"{lcs_label} + {fluid_label}",
         ridge_pct=ridge_pct,
         qskip=qskip * 3 if v is not None else qskip,
         cmap="Greys",
@@ -460,6 +482,31 @@ def _cell_edges_from_centers(coords):
     return np.concatenate([[left], mids, [right]])
 
 
+def _matched_ftle_mean_flow_backgrounds(u, v, LX, LY, reg_piv, ftle):
+    """Shared mean-flow backgrounds for FTLE-window-aligned plots."""
+    N = int(np.asarray(ftle["ftle_forward"]).shape[0])
+    backgrounds = []
+    background_fields = []
+    background_limit_pairs = []
+    flow_vector_refs = []
+
+    for idx in range(N):
+        background, _ = mean_fluid_flow_for_idx(u, v, LX, LY, reg_piv, ftle, idx)
+        background = np.asarray(background, dtype=np.float64)
+        if background.ndim == 3:
+            background_field = np.linalg.norm(background, axis=-1)
+            flow_vector_refs.append(_finite_percentile(background_field, 95, default=1.0))
+        else:
+            background_field = background
+        backgrounds.append(background)
+        background_fields.append(background_field)
+        background_limit_pairs.append(_finite_percentile_limits(background_field, 5, 95))
+
+    background_lo, background_hi = _stable_limit_band(background_limit_pairs)
+    flow_vector_ref = _stable_vector_reference(flow_vector_refs)
+    return backgrounds, background_fields, background_lo, background_hi, flow_vector_ref
+
+
 def fluid_vs_regional_flow_gif(
     reg_piv,
     results_dir,
@@ -489,9 +536,6 @@ def fluid_vs_regional_flow_gif(
     if outdir is None:
         outdir = os.path.join(results_dir, f"frames_flow_compare_{name}")
     os.makedirs(outdir, exist_ok=True)
-    if title_prefix is None:
-        title_prefix = f"{name}: fluid flow vs info flow"
-
     move_grid = np.asarray(reg_piv["move_grid"], dtype=np.float64)
     intervals = reg_piv["intervals"]
     K = move_grid.shape[0]
@@ -505,16 +549,20 @@ def fluid_vs_regional_flow_gif(
     x_full = np.linspace(0.0, LX, NX)
     y_full = np.linspace(0.0, LY, NY)
     X_full, Y_full = np.meshgrid(x_full, y_full, indexing="ij")
-    extent_full = (0.0, float(LX), 0.0, float(LY))
-
-    speed_limit_pairs = []
+    fluid_vector_refs = []
+    info_vector_refs = []
     for k in range(0, K, stride):
         s, e = intervals[k]
         u_mean = _temporal_mean_field(u[int(s):int(e)])
         v_mean = _temporal_mean_field(v[int(s):int(e)])
+        V_fluid = np.stack([u_mean, v_mean], axis=-1)
+        V_regional = V_info[k]
         speed = np.sqrt(u_mean**2 + v_mean**2)
-        speed_limit_pairs.append(_finite_percentile_limits(speed, 5, 95))
-    speed_lo, speed_hi = _stable_limit_band(speed_limit_pairs)
+        info_mag = np.linalg.norm(V_regional, axis=-1)
+        fluid_vector_refs.append(_finite_percentile(speed, 95, default=1.0))
+        info_vector_refs.append(_finite_percentile(info_mag, 95, default=1.0))
+    fluid_vector_ref = _stable_vector_reference(fluid_vector_refs)
+    info_vector_ref = _stable_vector_reference(info_vector_refs)
 
     with presentation_plot_context():
         frame_idx = 0
@@ -525,31 +573,21 @@ def fluid_vs_regional_flow_gif(
             u_mean = _temporal_mean_field(u[s:e])
             v_mean = _temporal_mean_field(v[s:e])
             V_fluid = np.stack([u_mean, v_mean], axis=-1)
-            speed = np.sqrt(u_mean**2 + v_mean**2)
             V_regional = V_info[k]
 
             fig, axes = plt.subplots(1, 2, figsize=WIDE_PANEL_FIGSIZE, constrained_layout=True)
 
             for ax in axes:
-                ax.imshow(
-                    speed.T,
-                    origin="lower",
-                    extent=extent_full,
-                    aspect="equal",
-                    cmap="Greys",
-                    alpha=0.34,
-                    vmin=speed_lo,
-                    vmax=speed_hi,
-                )
                 _add_info_domain_outline(ax, extent_info, edgecolor=INFO_LINE_COLOR)
                 style_spatial_axis(ax, xlim=(0.0, float(LX)), ylim=(0.0, float(LY)))
 
-            V_fluid_plot = _normalize_for_display(
+            V_fluid_plot = _scale_vectors_for_display(
                 V_fluid,
                 x_full,
                 y_full,
                 frac=0.055,
                 domain_span=(LX, LY),
+                reference_mag=fluid_vector_ref,
             )
             qs_fluid = _resolve_quiver_stride(
                 V_fluid_plot.shape[0],
@@ -564,20 +602,20 @@ def fluid_vs_regional_flow_gif(
                 V_fluid_plot[::qs_fluid, ::qs_fluid, 1],
                 angles="xy",
                 scale_units="xy",
-                scale=None,
+                scale=1,
                 width=0.0030,
                 color=FLOW_VECTOR_COLOR,
                 alpha=0.92,
             )
-            set_panel_title(axes[0], "Mean fluid flow")
-            add_frame_badge(axes[0], "Dashed box: info-flow domain")
+            set_panel_title(axes[0], "Fluid Flow")
 
-            V_regional_plot = _normalize_for_display(
+            V_regional_plot = _scale_vectors_for_display(
                 V_regional,
                 x_info,
                 y_info,
                 frac=0.055,
                 domain_span=(LX, LY),
+                reference_mag=info_vector_ref,
             )
             qs_info = _resolve_quiver_stride(
                 V_regional_plot.shape[0],
@@ -592,15 +630,13 @@ def fluid_vs_regional_flow_gif(
                 V_regional_plot[::qs_info, ::qs_info, 1],
                 angles="xy",
                 scale_units="xy",
-                scale=None,
+                scale=1,
                 width=0.0042,
-                color=INFO_VECTOR_COLOR,
+                color=FLOW_VECTOR_COLOR,
                 alpha=0.95,
             )
-            set_panel_title(axes[1], "Mean info flow")
-            add_frame_badge(axes[1], f"Quiver density matched to fluid view")
+            set_panel_title(axes[1], "InfoFlo")
 
-            fig.suptitle(title_prefix, x=0.06, ha="left", color="#1F2937")
             fig.savefig(os.path.join(outdir, f"frame_{frame_idx:04d}.png"), dpi=dpi)
             plt.close(fig)
             frame_idx += 1
@@ -641,7 +677,7 @@ def flow_cosine_similarity_gif(
         outdir = os.path.join(results_dir, f"frames_flow_cosine_{name}")
     os.makedirs(outdir, exist_ok=True)
     if title_prefix is None:
-        title_prefix = f"{name}: fluid vs info-flow direction cosine similarity"
+        title_prefix = "Fluid And InfoFlo Cosine Similarity"
 
     move_grid = np.asarray(reg_piv["move_grid"], dtype=np.float64)
     intervals = reg_piv["intervals"]
@@ -695,7 +731,7 @@ def flow_cosine_similarity_gif(
                 origin="lower",
                 extent=extent_full,
                 aspect="equal",
-                cmap="Greys",
+                cmap=SCALAR_OVERLAY_CMAP,
                 alpha=0.34,
                 vmin=speed_lo,
                 vmax=speed_hi,
@@ -715,10 +751,8 @@ def flow_cosine_similarity_gif(
             _add_info_domain_outline(ax, extent_info, edgecolor=INFO_LINE_COLOR)
             style_spatial_axis(ax, xlim=(0.0, float(LX)), ylim=(0.0, float(LY)))
             set_panel_title(ax, title_prefix)
-            add_frame_badge(ax, "Heat map evaluated on the info-flow grid")
 
-            cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-            style_colorbar(cbar, r"$\cos(\theta)$")
+            add_spatial_colorbar(fig, ax, im, r"$\cos(\theta)$")
 
             fig.savefig(os.path.join(outdir, f"frame_{frame_idx:04d}.png"), dpi=dpi)
             plt.close(fig)
@@ -754,11 +788,12 @@ def dual_lcs_overlay_gif(
     if outdir is None:
         outdir = os.path.join(results_dir, f"frames_dual_lcs_{name}")
     os.makedirs(outdir, exist_ok=True)
+    _clear_frame_images(outdir)
     if title_prefix is None:
         if v is None:
-            title_prefix = f"{name}: attracting and repelling LCS over mean scalar field"
+            title_prefix = "Attracting And Repelling LCS Over Mean Scalar Field"
         else:
-            title_prefix = f"{name}: attracting and repelling LCS over mean flow"
+            title_prefix = "Attracting And Repelling LCS Over Mean Flow"
 
     ftle_forward = np.asarray(ftle["ftle_forward"], dtype=np.float64)
     ftle_backward = np.asarray(ftle["ftle_backward"], dtype=np.float64)
@@ -772,15 +807,9 @@ def dual_lcs_overlay_gif(
     attract_threshold = _finite_percentile(ftle_backward, ridge_pct, default=0.0)
     repel_threshold = _finite_percentile(ftle_forward, ridge_pct, default=0.0)
 
-    background_limit_pairs = []
-    for idx in range(N):
-        background, _ = mean_fluid_flow_for_idx(u, v, LX, LY, reg_piv, ftle, idx)
-        if background.ndim == 3:
-            background_field = np.linalg.norm(background, axis=-1)
-        else:
-            background_field = background
-        background_limit_pairs.append(_finite_percentile_limits(background_field, 5, 95))
-    background_lo, background_hi = _stable_limit_band(background_limit_pairs)
+    backgrounds, background_fields, background_lo, background_hi, flow_vector_ref = (
+        _matched_ftle_mean_flow_backgrounds(u, v, LX, LY, reg_piv, ftle)
+    )
 
     if v is not None:
         NX, NY = u.shape[1], u.shape[2]
@@ -795,11 +824,8 @@ def dual_lcs_overlay_gif(
 
     with presentation_plot_context():
         for idx in range(N):
-            background, _ = mean_fluid_flow_for_idx(u, v, LX, LY, reg_piv, ftle, idx)
-            if background.ndim == 3:
-                background_field = np.linalg.norm(background, axis=-1)
-            else:
-                background_field = background
+            background = backgrounds[idx]
+            background_field = background_fields[idx]
 
             fig, ax = plt.subplots(1, 1, figsize=SINGLE_PANEL_FIGSIZE, constrained_layout=True)
             ax.imshow(
@@ -807,19 +833,20 @@ def dual_lcs_overlay_gif(
                 origin="lower",
                 extent=extent_full,
                 aspect="equal",
-                cmap="Greys" if background.ndim == 3 else SCALAR_OVERLAY_CMAP,
-                alpha=0.36 if background.ndim == 3 else 0.44,
+                cmap=SCALAR_OVERLAY_CMAP,
+                alpha=0.50 if background.ndim == 3 else 0.58,
                 vmin=background_lo,
                 vmax=background_hi,
             )
 
             if background.ndim == 3:
-                V_plot = _normalize_for_display(
+                V_plot = _scale_vectors_for_display(
                     background,
                     x_full,
                     y_full,
                     frac=0.055,
                     domain_span=(LX, LY),
+                    reference_mag=flow_vector_ref,
                 )
                 qs = max(1, int(qskip))
                 ax.quiver(
@@ -829,7 +856,7 @@ def dual_lcs_overlay_gif(
                     V_plot[::qs, ::qs, 1],
                     angles="xy",
                     scale_units="xy",
-                    scale=None,
+                    scale=1,
                     width=0.0030,
                     color=FLOW_VECTOR_COLOR,
                     alpha=0.88,
@@ -892,11 +919,12 @@ def dual_lcs_overlay_gif(
 def divergence_info_feild(
     reg_piv, results_dir, name,
     u, v, LX, LY, dt,
+    ftle=None,
     outdir=None,
     title_prefix=None,
     stride=1,
     qskip=10,
-    cmap="Greys",
+    cmap=SCALAR_OVERLAY_CMAP,
     # cmap_div="coolwarm",
     alpha_div=0.70,
     dpi=180,
@@ -917,11 +945,9 @@ def divergence_info_feild(
     if outdir is None:
         outdir = os.path.join(results_dir, f"frames_div_info_{name}")
     os.makedirs(outdir, exist_ok=True)
+    _clear_frame_images(outdir)
     if title_prefix is None:
-        if v is None:
-            title_prefix = f"{name}: div(info) over mean scalar field"
-        else:
-            title_prefix = f"{name}: div(info) over mean flow"
+        title_prefix = "Divergence of InfoFlo"
 
     # info velocity snapshots (K,out_nx,out_ny,2) in "velocity" units
     move_grid = np.asarray(reg_piv["move_grid"], dtype=float)
@@ -944,50 +970,88 @@ def divergence_info_feild(
         dx_flow = float(LX / (NX - 1))
         dy_flow = float(LY / (NY - 1))
 
-    # precompute global div scale to avoid flicker (like our consistent look)
+    # diagnostics for mean-flow divergence
+    flow_rms = []
+    flow_max = []
+
+    extent_full = (0.0, float(LX), 0.0, float(LY))
+    use_ftle_windows = ftle is not None
+    if use_ftle_windows:
+        N_frames = int(np.asarray(ftle["ftle_forward"]).shape[0])
+        frame_indices = range(N_frames)
+        backgrounds, background_fields, background_lo, background_hi, flow_vector_ref = (
+            _matched_ftle_mean_flow_backgrounds(u, v, LX, LY, reg_piv, ftle)
+        )
+    else:
+        frame_indices = range(0, K, stride)
+
+    div_vals = []
+    if use_ftle_windows:
+        for frame_idx in frame_indices:
+            Vk, _ = mean_info_flow_for_idx(reg_piv, ftle, frame_idx)
+            if global_div_limits:
+                divk = _divergence_2d(Vk[..., 0], Vk[..., 1], dx_info, dy_info)
+                div_vals.append(divk.ravel())
+    else:
+        background_limit_pairs = []
+        flow_vector_refs = []
+        for frame_idx in frame_indices:
+            s, e = intervals[frame_idx]
+            s = int(s); e = int(e)
+            if v is None:
+                background_field = _temporal_mean_field(u[s:e])
+            else:
+                u_mean = _temporal_mean_field(u[s:e])
+                v_mean = _temporal_mean_field(v[s:e])
+                background_field = np.sqrt(u_mean**2 + v_mean**2)
+            Vk = V_info[frame_idx]
+
+            if np.asarray(background_field).ndim == 2:
+                flow_vector_refs.append(_finite_percentile(background_field, 95, default=1.0))
+            background_limit_pairs.append(_finite_percentile_limits(background_field, 5, 95))
+            if global_div_limits:
+                divk = _divergence_2d(Vk[..., 0], Vk[..., 1], dx_info, dy_info)
+                div_vals.append(divk.ravel())
+        background_lo, background_hi = _stable_limit_band(background_limit_pairs)
+        flow_vector_ref = _stable_vector_reference(flow_vector_refs)
     if global_div_limits:
-        div_vals = []
-        for k in range(0, K, stride):
-            Vk = V_info[k]
-            divk = _divergence_2d(Vk[..., 0], Vk[..., 1], dx_info, dy_info)
-            div_vals.append(divk.ravel())
         div_vals = np.concatenate(div_vals)
         div_limit = float(np.percentile(np.abs(div_vals), div_pct))
         div_limit = max(div_limit, 1e-12)
     else:
         div_limit = None
 
-    # diagnostics for mean-flow divergence
-    flow_rms = []
-    flow_max = []
-
-    extent_full = (0.0, float(LX), 0.0, float(LY))
-
-    frame_idx = 0
+    out_frame_idx = 0
     with presentation_plot_context():
-        for k in range(0, K, stride):
-            s, e = intervals[k]
-            s = int(s); e = int(e)
-
-            if v is None:
-                background = _temporal_mean_field(u[s:e])
-                background_cmap = SCALAR_OVERLAY_CMAP if cmap == "Greys" else cmap
-                background_label = "Mean scalar field"
+        for frame_idx in frame_indices:
+            if use_ftle_windows:
+                background = backgrounds[frame_idx]
+                background_field = background_fields[frame_idx]
+                Vk, _ = mean_info_flow_for_idx(reg_piv, ftle, frame_idx)
             else:
-                u_mean = _temporal_mean_field(u[s:e])
-                v_mean = _temporal_mean_field(v[s:e])
-                background = np.sqrt(u_mean**2 + v_mean**2)
-                background_cmap = cmap
-                background_label = "Mean fluid speed"
+                s, e = intervals[frame_idx]
+                s = int(s); e = int(e)
+                if v is None:
+                    background = _temporal_mean_field(u[s:e])
+                    background_field = background
+                else:
+                    u_mean = _temporal_mean_field(u[s:e])
+                    v_mean = _temporal_mean_field(v[s:e])
+                    background = np.stack([u_mean, v_mean], axis=-1)
+                    background_field = np.linalg.norm(background, axis=-1)
+                Vk = V_info[frame_idx]
 
-                div_flow = _divergence_2d(u_mean, v_mean, dx_flow, dy_flow)
-                flow_rms.append(float(np.sqrt(np.mean(div_flow**2))))
-                flow_max.append(float(np.max(np.abs(div_flow))))
-
-            Vk = V_info[k]
+            if v is not None:
+                if use_ftle_windows and background.ndim == 3:
+                    div_flow = _divergence_2d(background[..., 0], background[..., 1], dx_flow, dy_flow)
+                elif not use_ftle_windows:
+                    div_flow = _divergence_2d(background[..., 0], background[..., 1], dx_flow, dy_flow)
+                else:
+                    div_flow = None
+                if div_flow is not None:
+                    flow_rms.append(float(np.sqrt(np.mean(div_flow**2))))
+                    flow_max.append(float(np.max(np.abs(div_flow))))
             div_info = _divergence_2d(Vk[..., 0], Vk[..., 1], dx_info, dy_info)
-
-            vmin_bg, vmax_bg = _finite_percentile_limits(background, 5, 95)
 
             if div_limit is None:
                 lim_k = float(np.percentile(np.abs(div_info), div_pct))
@@ -998,14 +1062,14 @@ def divergence_info_feild(
             fig, ax = plt.subplots(1, 1, figsize=SINGLE_PANEL_FIGSIZE, constrained_layout=True)
 
             ax.imshow(
-                background.T,
+                background_field.T,
                 origin="lower",
                 extent=extent_full,
                 aspect="equal",
-                cmap=background_cmap,
-                alpha=0.42 if v is None else 0.34,
-                vmin=vmin_bg,
-                vmax=vmax_bg,
+                cmap=SCALAR_OVERLAY_CMAP,
+                alpha=0.50 if np.asarray(background).ndim == 3 else 0.58,
+                vmin=background_lo,
+                vmax=background_hi,
             )
 
             norm = TwoSlopeNorm(vmin=-lim_k, vcenter=0.0, vmax=lim_k)
@@ -1019,29 +1083,35 @@ def divergence_info_feild(
                 alpha=alpha_div,
             )
 
-            cbar = fig.colorbar(im, ax=ax, fraction=0.046, pad=0.04)
-            style_colorbar(cbar, r"$\nabla \cdot v_{\mathrm{info}}$")
+            add_spatial_colorbar(fig, ax, im, r"$\nabla \cdot v_{\mathrm{info}}$")
 
-            if v is not None:
+            if v is not None and np.asarray(background).ndim == 3:
+                V_flow_plot = _scale_vectors_for_display(
+                    background,
+                    xq,
+                    yq,
+                    frac=0.055,
+                    domain_span=(LX, LY),
+                    reference_mag=flow_vector_ref,
+                )
                 qs = max(1, int(qskip))
                 ax.quiver(
                     Xq[::qs, ::qs], Yq[::qs, ::qs],
-                    u_mean[::qs, ::qs], v_mean[::qs, ::qs],
+                    V_flow_plot[::qs, ::qs, 0], V_flow_plot[::qs, ::qs, 1],
                     angles="xy",
                     scale_units="xy",
-                    scale=None,
-                    width=0.0032,
+                    scale=1,
+                    width=0.0030,
                     color=FLOW_VECTOR_COLOR,
-                    alpha=0.90,
+                    alpha=0.88,
                 )
 
             style_spatial_axis(ax, xlim=(0.0, float(LX)), ylim=(0.0, float(LY)))
             set_panel_title(ax, title_prefix)
-            add_frame_badge(ax, f"Background: {background_label}")
 
-            fig.savefig(os.path.join(outdir, f"frame_{frame_idx:04d}.png"), dpi=dpi)
+            fig.savefig(os.path.join(outdir, f"frame_{out_frame_idx:04d}.png"), dpi=dpi)
             plt.close(fig)
-            frame_idx += 1
+            out_frame_idx += 1
 
     if v is not None:
         print(f"[div(mean flow)] mean RMS: {np.mean(flow_rms):.3e}")
@@ -1052,6 +1122,162 @@ def divergence_info_feild(
 
     gif_suffix = "mean_scalar" if v is None else "mean_flow"
     gif_path = os.path.join(results_dir, f"{name}_div_info_over_{gif_suffix}.gif")
+    make_gif_from_dir(outdir, gif_path, duration=duration)
+    return gif_path
+
+
+def info_lcs_overlay_gif_from_pickles(
+    reg_piv,
+    ftle,
+    results_dir,
+    name,
+    which="backward",
+    ridge_pct=92,
+    qskip=2,
+    duration=0.10,
+):
+    """
+    Redraw an FTLE + mean-info-flow overlay using only regional PIV and FTLE pickles.
+
+    This is the pickle-only half of overlay_lcs_with_flows(...); it deliberately avoids
+    any dependency on the original u/v flow arrays.
+    """
+    x = np.asarray(ftle["x"], dtype=np.float64)
+    y = np.asarray(ftle["y"], dtype=np.float64)
+    lx = float(x[-1] - x[0]) if len(x) > 1 else 1.0
+    ly = float(y[-1] - y[0]) if len(y) > 1 else 1.0
+
+    if which.lower().startswith("back"):
+        ftle_series = np.asarray(ftle["ftle_backward"], dtype=np.float64)
+        lcs_label = "Backward FTLE"
+    else:
+        ftle_series = np.asarray(ftle["ftle_forward"], dtype=np.float64)
+        lcs_label = "Forward FTLE"
+
+    outdir_info = os.path.join(results_dir, f"gif_frames_{name}_info")
+
+    def info_provider(idx):
+        Vmean, (k0, k1) = mean_info_flow_for_idx(reg_piv, ftle, idx)
+        return Vmean, f"k[{k0},{k1})"
+
+    render_overlay_frames(
+        ftle_series,
+        x,
+        y,
+        lx,
+        ly,
+        V_provider=info_provider,
+        outdir=outdir_info,
+        title_prefix=f"{lcs_label} + Mean InfoFlo",
+        ridge_pct=ridge_pct,
+        qskip=qskip,
+        cmap="Greys",
+        alpha=0.80,
+    )
+
+    gif_info = os.path.join(results_dir, f"{name}_ftle_plus_info.gif")
+    make_gif_from_dir(outdir_info, gif_info, duration=duration)
+    return gif_info
+
+
+def divergence_info_only_gif_from_pickles(
+    reg_piv,
+    ftle,
+    results_dir,
+    name,
+    outdir=None,
+    title_prefix="Divergence of InfoFlo",
+    stride=1,
+    duration=0.10,
+    div_pct=98,
+    global_div_limits=True,
+    dpi=180,
+):
+    """
+    Redraw info-flow divergence using only regional PIV and FTLE pickles.
+
+    The background is info-flow speed on the regional grid, so this does not require
+    the original fluid velocity or scalar field.
+    """
+    os.makedirs(results_dir, exist_ok=True)
+    if outdir is None:
+        outdir = os.path.join(results_dir, f"frames_div_info_only_{name}")
+    os.makedirs(outdir, exist_ok=True)
+
+    move_grid = np.asarray(reg_piv["move_grid"], dtype=np.float64)
+    K = move_grid.shape[0]
+    dt = float(ftle.get("dt", ftle.get("dt_snap", 1.0)))
+    W = int(reg_piv["meta"]["time_window"])
+    tau = max(float(W * dt), 1e-12)
+    V_info = move_grid / tau
+
+    x_info, y_info, extent_info, dx_info, dy_info = _info_axes_from_centers_xy(reg_piv)
+    lx = float(max(np.max(x_info), np.max(np.asarray(ftle["x"], dtype=np.float64))))
+    ly = float(max(np.max(y_info), np.max(np.asarray(ftle["y"], dtype=np.float64))))
+
+    speed_limit_pairs = []
+    div_vals = []
+    for k in range(0, K, stride):
+        Vk = V_info[k]
+        speed_limit_pairs.append(_finite_percentile_limits(np.linalg.norm(Vk, axis=-1), 5, 95))
+        if global_div_limits:
+            divk = _divergence_2d(Vk[..., 0], Vk[..., 1], dx_info, dy_info)
+            div_vals.append(divk.ravel())
+    speed_lo, speed_hi = _stable_limit_band(speed_limit_pairs)
+
+    if global_div_limits and div_vals:
+        div_vals = np.concatenate(div_vals)
+        div_limit = float(np.percentile(np.abs(div_vals), div_pct))
+        div_limit = max(div_limit, 1e-12)
+    else:
+        div_limit = None
+
+    frame_idx = 0
+    with presentation_plot_context():
+        for k in range(0, K, stride):
+            Vk = V_info[k]
+            speed = np.linalg.norm(Vk, axis=-1)
+            div_info = _divergence_2d(Vk[..., 0], Vk[..., 1], dx_info, dy_info)
+
+            if div_limit is None:
+                lim_k = float(np.percentile(np.abs(div_info), div_pct))
+                lim_k = max(lim_k, 1e-12)
+            else:
+                lim_k = div_limit
+
+            fig, ax = plt.subplots(1, 1, figsize=SINGLE_PANEL_FIGSIZE, constrained_layout=True)
+
+            ax.imshow(
+                speed.T,
+                origin="lower",
+                extent=extent_info,
+                aspect="equal",
+                cmap=SCALAR_OVERLAY_CMAP,
+                alpha=0.45,
+                vmin=speed_lo,
+                vmax=speed_hi,
+            )
+
+            norm = TwoSlopeNorm(vmin=-lim_k, vcenter=0.0, vmax=lim_k)
+            im = ax.imshow(
+                div_info.T,
+                origin="lower",
+                extent=extent_info,
+                aspect="equal",
+                cmap=DIVERGENCE_CMAP,
+                norm=norm,
+                alpha=0.78,
+            )
+
+            add_spatial_colorbar(fig, ax, im, r"$\nabla \cdot v_{\mathrm{info}}$")
+            style_spatial_axis(ax, xlim=(0.0, lx), ylim=(0.0, ly))
+            set_panel_title(ax, title_prefix)
+
+            fig.savefig(os.path.join(outdir, f"frame_{frame_idx:04d}.png"), dpi=dpi)
+            plt.close(fig)
+            frame_idx += 1
+
+    gif_path = os.path.join(results_dir, f"{name}_div_info_only.gif")
     make_gif_from_dir(outdir, gif_path, duration=duration)
     return gif_path
 

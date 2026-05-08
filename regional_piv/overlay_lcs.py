@@ -2,7 +2,7 @@ import os, pickle
 import numpy as np
 import matplotlib.pyplot as plt
 import imageio.v2 as imageio
-from matplotlib.patches import Rectangle
+from matplotlib.patches import Patch, Rectangle
 
 from numbacs.flows import get_interp_arrays_2D, get_flow_2D
 from numbacs.integration import flowmap_grid_2D
@@ -14,7 +14,7 @@ from plot_style import (
     INFO_LINE_COLOR,
     SCALAR_OVERLAY_CMAP,
     SINGLE_PANEL_FIGSIZE,
-    add_frame_badge,
+    finalize_legend,
     presentation_plot_context,
     set_panel_title,
     style_spatial_axis,
@@ -82,6 +82,8 @@ def save_ftle_overlap_series_plots(
     background_label="fluid FTLE",
     background_cmap="Blues",
     title="Info FTLE overlap",
+    info_legend_label="InfoFlo FTLE",
+    background_legend_label="Fluid FTLE",
 ):
     """
     Draw overlap WITHOUT resampling:
@@ -106,6 +108,12 @@ def save_ftle_overlap_series_plots(
 
     info_extent  = (float(x_info.min()), float(x_info.max()), float(y_info.min()), float(y_info.max()))
     fluid_extent = (0.0, float(LX), 0.0, float(LY))
+    info_color = plt.get_cmap("Reds")(0.72)
+    background_color = plt.get_cmap(background_cmap)(0.72)
+    legend_handles = [
+        Patch(facecolor=info_color, edgecolor=info_color, alpha=0.75, label=info_legend_label),
+        Patch(facecolor=background_color, edgecolor=background_color, alpha=0.75, label=background_legend_label),
+    ]
 
     N = ftle_info_series.shape[0]
     with presentation_plot_context():
@@ -153,8 +161,7 @@ def save_ftle_overlap_series_plots(
 
             style_spatial_axis(ax, xlim=(0.0, float(LX)), ylim=(0.0, float(LY)))
             set_panel_title(ax, title)
-            add_frame_badge(ax, f"Background: {background_label}\nRed: info FTLE")
-            add_frame_badge(ax, "Dashed box: info subdomain", loc="upper right")
+            finalize_legend(ax, handles=legend_handles, loc="lower right")
 
             fig.savefig(os.path.join(outdir, f"{basename}_{i:04d}.png"), dpi=dpi)
             plt.close(fig)
@@ -248,11 +255,15 @@ def make_overlap_gif(reg_piv, ftle, results_dir, name, u, v, LX, LY, which="back
     fmax = max(e for (s, e) in reg_piv["intervals"])
     assert fmax <= u.shape[0], f"Intervals require {fmax} frames but u has {u.shape[0]}"
 
+    lcs_kind = "Attracting" if which.startswith("back") else "Repelling"
+
     if v is None:
         background_series, spans = compute_scalar_series_matched(u, reg_piv, ftle)
         background_label = "mean scalar field"
         background_cmap = SCALAR_OVERLAY_CMAP
-        title = "Info FTLE + matched scalar field"
+        title = f"InfoFlo {lcs_kind} FTLE Over Mean Scalar Field"
+        info_legend_label = f"InfoFlo {lcs_kind} FTLE"
+        background_legend_label = "Mean Scalar Field"
     else:
         # ensure dt exists and matches what u,v represent
         assert "dt" in ftle, "ftle pickle missing dt; fluid FTLE timing may be wrong"
@@ -261,7 +272,9 @@ def make_overlap_gif(reg_piv, ftle, results_dir, name, u, v, LX, LY, which="back
         )
         background_label = "fluid FTLE"
         background_cmap = "Blues"
-        title = "Info FTLE + fluid FTLE"
+        title = f"{lcs_kind} FTLE Overlap"
+        info_legend_label = f"InfoFlo {lcs_kind} FTLE"
+        background_legend_label = f"Fluid {lcs_kind} FTLE"
    
     # render overlap frames using plotting.py helper
     out_frames = os.path.join(results_dir, f"frames_overlap_{name}_{which}")
@@ -276,6 +289,8 @@ def make_overlap_gif(reg_piv, ftle, results_dir, name, u, v, LX, LY, which="back
         background_label=background_label,
         background_cmap=background_cmap,
         title=title,
+        info_legend_label=info_legend_label,
+        background_legend_label=background_legend_label,
     )
 
 

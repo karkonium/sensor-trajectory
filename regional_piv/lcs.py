@@ -11,10 +11,10 @@ from plot_style import (
     INFO_VECTOR_COLOR,
     RIDGE_COLOR,
     WIDE_PANEL_FIGSIZE,
+    add_spatial_colorbar,
     add_frame_badge,
     presentation_plot_context,
     set_panel_title,
-    style_colorbar,
     style_spatial_axis,
 )
 
@@ -58,7 +58,7 @@ def quiver_row(
                 alpha=0.95,
             )
             style_spatial_axis(ax, xlim=xlim, ylim=ylim)
-            set_panel_title(ax, "Info flow snapshot")
+            set_panel_title(ax, "Info Flow Snapshot")
 
         if outdir is not None:
             os.makedirs(outdir, exist_ok=True)
@@ -424,8 +424,7 @@ def save_ftle_series_plots(
             )
             style_spatial_axis(axes[0], xlim=(-px, lx + px), ylim=(-py, ly + py))
             set_panel_title(axes[0], "Forward FTLE")
-            cbar0 = fig.colorbar(im0, ax=axes[0], fraction=0.046, pad=0.04)
-            style_colorbar(cbar0, "FTLE")
+            add_spatial_colorbar(fig, axes[0], im0, "FTLE")
 
             im1 = axes[1].imshow(
                 ftle_bwd.T,
@@ -438,8 +437,7 @@ def save_ftle_series_plots(
             )
             style_spatial_axis(axes[1], xlim=(-px, lx + px), ylim=(-py, ly + py))
             set_panel_title(axes[1], "Backward FTLE")
-            cbar1 = fig.colorbar(im1, ax=axes[1], fraction=0.046, pad=0.04)
-            style_colorbar(cbar1, "FTLE")
+            add_spatial_colorbar(fig, axes[1], im1, "FTLE")
 
             th_f = np.percentile(ftle_fwd, ridge_pct)
             th_b = np.percentile(ftle_bwd, ridge_pct)

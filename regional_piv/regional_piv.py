@@ -140,6 +140,7 @@ def regional_local_optimal_direction_series(
     t_start=0,
     t_end=None,
     scale_mode="mean_radius",  # "mean_radius" or "fixed"
+    distance_coeff=1.0,        # arrow magnitude multiplier
     fixed_scale=None,          # if scale_mode="fixed", arrow length in physical units
     plot_every=1,
     show=True,
@@ -152,7 +153,10 @@ def regional_local_optimal_direction_series(
     For each sliding time window [s,e), tile the domain with overlapping physical windows.
     In each tile, run POD–QR on (u,v) restricted to that tile/time window, select local sensors,
     and put an arrow at the tile center pointing toward the *average direction* from center
-    to those sensors. No cross-window matching; each window is independent.
+    to those sensors. Arrow magnitude is distance_coeff times the selected scale:
+      - scale_mode="mean_radius": mean physical center-to-sensor distance
+      - scale_mode="fixed": fixed_scale
+    No cross-window matching; each window is independent.
 
     Parallelization:
       - If parallel=True, tiles inside each window are processed in parallel with joblib
@@ -173,6 +177,11 @@ def regional_local_optimal_direction_series(
     t_end   = int(min(T, t_end))
     if t_end - t_start < time_window:
         raise ValueError("time_window does not fit into [t_start, t_end).")
+    distance_coeff = float(distance_coeff)
+    if scale_mode not in {"mean_radius", "fixed"}:
+        raise ValueError('scale_mode must be "mean_radius" or "fixed".')
+    if scale_mode == "fixed" and fixed_scale is None:
+        raise ValueError('fixed_scale must be provided when scale_mode="fixed".')
 
     # grid spacing (physical per index)
     dx = lx / (nx - 1)
@@ -244,7 +253,18 @@ def regional_local_optimal_direction_series(
         ys = coords[:, 1] * dy
         d  = np.column_stack([xs - xc, ys - yc])
 
-        return d.mean(axis=0)
+        mean_vec = d.mean(axis=0)
+        mean_norm = np.linalg.norm(mean_vec)
+        if mean_norm < 1e-12:
+            return np.zeros(2, dtype=float)
+
+        direction = mean_vec / mean_norm
+        if scale_mode == "fixed":
+            magnitude = float(fixed_scale)
+        else:
+            magnitude = float(np.linalg.norm(d, axis=1).mean())
+
+        return direction * (distance_coeff * magnitude)
 
     # infer n_jobs from env if not explicitly provided
     if n_jobs is None:
@@ -323,7 +343,7 @@ def regional_local_optimal_direction_series(
                     zorder=2,
                 )
                 style_spatial_axis(ax, xlim=(0.0, float(lx)), ylim=(0.0, float(ly)))
-                set_panel_title(ax, "Info flow direction field")
+                set_panel_title(ax, "Info Flow Direction Field")
 
                 if save_plots:
                     fname = f"window_{w_idx:04d}.png"
@@ -347,6 +367,6 @@ def regional_local_optimal_direction_series(
             win_nx=win_nx, win_ny=win_ny,
             centers_nx=out_nx, centers_ny=out_ny,
             time_window=time_window, time_step=time_step,
-            scale_mode=scale_mode, fixed_scale=fixed_scale
+            scale_mode=scale_mode, distance_coeff=distance_coeff, fixed_scale=fixed_scale
         )
     )
