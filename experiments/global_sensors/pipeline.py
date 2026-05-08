@@ -6,7 +6,7 @@ from tqdm.auto import tqdm
 
 from experiments.common.config import config_from_arrays
 from experiments.common.sensor_motion import advect, advect_hungarian, bounce_apart
-from experiments.common.spatial_utils import coords_to_linear_index, grid_to_phys, seed_sensor_grid
+from experiments.common.spatial_utils import coords_to_linear_index, grid_to_phys
 from experiments.common.state_reconstruction import (
     fit_pod_basis,
     fit_sspor_model,
@@ -15,6 +15,12 @@ from experiments.common.state_reconstruction import (
     selected_nodes_from_uv,
 )
 from experiments.common.windowing import get_sliding_intervals
+
+
+def _node_indices_to_phys(node_indices, nx, ny, lx, ly):
+    """Convert flattened scalar-grid node indices to physical coordinates."""
+    node_index_pairs = np.column_stack(np.unravel_index(node_indices, (nx, ny)))
+    return grid_to_phys(node_index_pairs, nx, ny, lx, ly)
 
 
 def run_pod_basis_comparison(
@@ -71,27 +77,31 @@ def run_pod_basis_comparison(
     full_state_matrix = flatten_state(u, v)
     dx = experiment_config.domain.lx / nx
     dy = experiment_config.domain.ly / ny
+    basis_dim = int(experiment_config.num_sensors)
 
     global_basis_matrix = fit_pod_basis(
         full_state_matrix,
-        max_basis_dim=experiment_config.max_basis_dim,
+        max_basis_dim=basis_dim,
         seed=experiment_config.seed,
     )
 
     static_sspor_model = fit_sspor_model(
         full_state_matrix,
         num_sensors=experiment_config.num_sensors,
-        max_basis_dim=experiment_config.max_basis_dim,
+        max_basis_dim=basis_dim,
         seed=experiment_config.seed,
     )
     static_qr_nodes = selected_nodes_from_uv(static_sspor_model.selected_sensors, nx, ny)
-
-    lagrangian_sensor_positions = seed_sensor_grid(
-        experiment_config.num_sensors,
+    static_qr_sensor_positions = _node_indices_to_phys(
+        static_qr_nodes,
+        nx,
+        ny,
         experiment_config.domain.lx,
         experiment_config.domain.ly,
     )
-    moving_pod_qr_sensor_positions = lagrangian_sensor_positions.copy()
+
+    lagrangian_sensor_positions = static_qr_sensor_positions.copy()
+    moving_pod_qr_sensor_positions = static_qr_sensor_positions.copy()
 
     max_sensor_speed = float(np.max(np.hypot(u, v)))
 
@@ -105,16 +115,15 @@ def run_pod_basis_comparison(
         window_sspor_model = fit_sspor_model(
             window_state_matrix,
             num_sensors=experiment_config.num_sensors,
-            max_basis_dim=experiment_config.max_basis_dim,
+            max_basis_dim=basis_dim,
             seed=experiment_config.seed,
         )
 
         window_qr_nodes = selected_nodes_from_uv(window_sspor_model.selected_sensors, nx, ny)
         window_basis_matrix = window_sspor_model.basis_matrix_
 
-        window_qr_index_pairs = np.column_stack(np.unravel_index(window_qr_nodes, (nx, ny)))
-        window_qr_target_positions = grid_to_phys(
-            window_qr_index_pairs,
+        window_qr_target_positions = _node_indices_to_phys(
+            window_qr_nodes,
             nx,
             ny,
             experiment_config.domain.lx,

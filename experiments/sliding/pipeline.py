@@ -10,7 +10,7 @@ from tqdm.auto import tqdm
 
 from experiments.common.config import config_from_arrays
 from experiments.common.sensor_motion import advect, advect_hungarian, bounce_apart
-from experiments.common.spatial_utils import coords_to_linear_index, grid_to_phys, seed_sensor_grid
+from experiments.common.spatial_utils import coords_to_linear_index, grid_to_phys, seed_sensor_grid, seed_uniform_random
 from experiments.common.state_reconstruction import (
     flatten_state,
     fit_sspor_model,
@@ -20,7 +20,12 @@ from experiments.common.state_reconstruction import (
 )
 from experiments.common.windowing import get_sliding_intervals
 
-from .plotting import make_window_gif, save_window_frame
+from .plotting import (
+    make_window_gif,
+    save_flow_field_frame,
+    save_sensor_motion_frame,
+    save_trajectory_plot,
+)
 
 
 def _sample_flow_vectors(points, u_grid, v_grid, lx, ly):
@@ -46,34 +51,68 @@ def _sample_flow_vectors(points, u_grid, v_grid, lx, ly):
     return np.stack([u_interpolator(point_array), v_interpolator(point_array)], axis=1)
 
 
-def _resolve_window_visual_paths(plot_windows, save_window_frames, run_name, frames_dir, make_gif, gif_path):
-    """Resolve frame and GIF output paths.
+def _resolve_animation_paths(
+    plot_windows,
+    save_window_frames,
+    run_name,
+    frames_dir,
+    make_flow_gif,
+    flow_gif_path,
+    make_sensor_motion_gif,
+    sensor_motion_gif_path,
+):
+    """Resolve sliding animation frame and GIF output paths.
 
     Args:
-        plot_windows: Whether plotting is enabled.
-        save_window_frames: Whether PNG frames are written.
+        plot_windows: Whether animation frame rendering is enabled.
+        save_window_frames: Whether frame directories should be materialized.
         run_name: Name used for default output naming.
         frames_dir: Optional user-provided frame directory.
-        make_gif: Whether GIF creation is requested.
-        gif_path: Optional user-provided GIF output path.
+        make_flow_gif: Whether the flow-only GIF is requested.
+        flow_gif_path: Optional output path for the flow-only GIF.
+        make_sensor_motion_gif: Whether the sensor-motion GIF is requested.
+        sensor_motion_gif_path: Optional output path for the sensor-motion GIF.
 
     Returns:
-        Tuple (resolved_frames_dir, resolved_gif_path).
+        Tuple of resolved flow-frame dir, sensor-frame dir, flow GIF path,
+        and sensor-motion GIF path.
     """
-    if not plot_windows:
-        return None, None
+    render_flow_frames = plot_windows or make_flow_gif
+    render_sensor_motion_frames = plot_windows or make_sensor_motion_gif
+    should_materialize_frames = save_window_frames or render_flow_frames or render_sensor_motion_frames
 
-    resolved_frames_dir = None
-    resolved_gif_path = None
+    if not should_materialize_frames and not make_flow_gif and not make_sensor_motion_gif:
+        return None, None, None, None
 
-    should_render_frames = save_window_frames or make_gif
-    if should_render_frames:
-        resolved_frames_dir = frames_dir or os.path.join("experiments", "sliding", "artifacts", "frames", run_name)
+    base_frames_dir = frames_dir or os.path.join("experiments", "sliding", "artifacts", "frames", run_name)
+    resolved_flow_frames_dir = (
+        os.path.join(base_frames_dir, "flow_field")
+        if should_materialize_frames and render_flow_frames
+        else None
+    )
+    resolved_sensor_motion_frames_dir = (
+        os.path.join(base_frames_dir, "sensor_motion")
+        if should_materialize_frames and render_sensor_motion_frames
+        else None
+    )
 
-    if make_gif:
-        resolved_gif_path = gif_path or os.path.join("experiments", "sliding", "artifacts", "frames", f"{run_name}.gif")
+    resolved_flow_gif_path = None
+    if make_flow_gif:
+        resolved_flow_gif_path = flow_gif_path or os.path.join(base_frames_dir, f"{run_name}_flow.gif")
 
-    return resolved_frames_dir, resolved_gif_path
+    resolved_sensor_motion_gif_path = None
+    if make_sensor_motion_gif:
+        resolved_sensor_motion_gif_path = sensor_motion_gif_path or os.path.join(
+            base_frames_dir,
+            f"{run_name}_sensor_motion.gif",
+        )
+
+    return (
+        resolved_flow_frames_dir,
+        resolved_sensor_motion_frames_dir,
+        resolved_flow_gif_path,
+        resolved_sensor_motion_gif_path,
+    )
 
 def _state_at_t(full_state_matrix, t_idx, total_steps):
     """Return flattened state vector x(t_idx) regardless of matrix orientation."""
@@ -101,6 +140,14 @@ def _cumulative_variance_from_direct_svd(state_matrix, basis_rank):
     return float(np.sum(singular_values_sq[:basis_rank]) / total_energy)
 
 
+def _history_with_final_position(history, final_positions):
+    """Append the final sensor positions for end-of-run trajectory plotting."""
+    final_positions = np.asarray(final_positions, dtype=float)
+    if not history:
+        return final_positions[None, ...]
+    return np.concatenate([np.stack(history), final_positions[None, ...]], axis=0)
+
+
 def run_experiment_sliding(
     u,
     v,
@@ -114,8 +161,13 @@ def run_experiment_sliding(
     plot_windows=True,
     save_window_frames=True,
     frames_dir=None,
-    make_gif=False,
-    gif_path=None,
+    make_flow_gif=False,
+    flow_gif_path=None,
+    make_sensor_motion_gif=False,
+    sensor_motion_gif_path=None,
+    sensor_tail_length=48,
+    plot_trajectories=False,
+    trajectory_plot_path=None,
     gif_duration=0.10,
     run_name="run",
     show_progress=True,
@@ -132,11 +184,16 @@ def run_experiment_sliding(
         periodic: Whether to apply periodic boundaries in motion updates.
         return_paths: Whether to return trajectory/history arrays.
         config: Optional ExperimentConfig; inferred from arrays if omitted.
-        plot_windows: Whether per-window rendering is enabled.
-        save_window_frames: Whether to save individual window PNGs.
-        frames_dir: Optional output directory for saved frames.
-        make_gif: Whether to create GIF from window PNGs.
-        gif_path: Optional output GIF path.
+        plot_windows: Whether animation frames should be rendered.
+        save_window_frames: Whether animation frame directories are emitted.
+        frames_dir: Optional base output directory for animation frames.
+        make_flow_gif: Whether to create a flow-only GIF.
+        flow_gif_path: Optional output GIF path for the flow-only animation.
+        make_sensor_motion_gif: Whether to create a flow-plus-sensors GIF.
+        sensor_motion_gif_path: Optional output GIF path for the sensor-motion animation.
+        sensor_tail_length: Number of recent steps to retain in the fading sensor tail.
+        plot_trajectories: Whether to save a final sensor-trajectory summary plot.
+        trajectory_plot_path: Optional output path for the trajectory plot PNG.
         gif_duration: GIF frame duration in seconds.
         run_name: Run label used in default output paths.
         show_progress: Whether to show tqdm progress.
@@ -167,16 +224,24 @@ def run_experiment_sliding(
         raise ValueError("No sliding intervals produced; adjust window_len or step_size")
     total_windows = len(intervals)
 
-    lagrangian_sensor_positions = seed_sensor_grid(
+    # lagrangian_sensor_positions = seed_sensor_grid(
+    #     experiment_config.num_sensors,
+    #     experiment_config.domain.lx,
+    #     experiment_config.domain.ly,
+    # )
+
+    lagrangian_sensor_positions = seed_uniform_random(
         experiment_config.num_sensors,
         experiment_config.domain.lx,
         experiment_config.domain.ly,
     )
+
     moving_pod_qr_sensor_positions = lagrangian_sensor_positions.copy()
     fixed_sensor_positions = lagrangian_sensor_positions.copy()
 
     lagrangian_history = []
     moving_history = []
+    moving_frame_history = []
     moving_heading_history = []
     moving_flow_history = []
 
@@ -185,17 +250,38 @@ def run_experiment_sliding(
     variance_captured_attr_history = []
     variance_captured_svd_history = []
 
-    resolved_frames_dir, resolved_gif_path = _resolve_window_visual_paths(
+    (
+        resolved_flow_frames_dir,
+        resolved_sensor_motion_frames_dir,
+        resolved_flow_gif_path,
+        resolved_sensor_motion_gif_path,
+    ) = _resolve_animation_paths(
         plot_windows=plot_windows,
         save_window_frames=save_window_frames,
         run_name=run_name,
         frames_dir=frames_dir,
-        make_gif=make_gif,
-        gif_path=gif_path,
+        make_flow_gif=make_flow_gif,
+        flow_gif_path=flow_gif_path,
+        make_sensor_motion_gif=make_sensor_motion_gif,
+        sensor_motion_gif_path=sensor_motion_gif_path,
     )
 
-    if resolved_frames_dir is not None:
-        os.makedirs(resolved_frames_dir, exist_ok=True)
+    render_sensor_motion_frames = resolved_sensor_motion_frames_dir is not None
+    track_sensor_paths = return_paths or plot_trajectories
+
+    for animation_frames_dir in (resolved_flow_frames_dir, resolved_sensor_motion_frames_dir):
+        if animation_frames_dir is not None:
+            os.makedirs(animation_frames_dir, exist_ok=True)
+
+    resolved_trajectory_plot_path = trajectory_plot_path
+    if plot_trajectories and resolved_trajectory_plot_path is None:
+        resolved_trajectory_plot_path = os.path.join(
+            "experiments",
+            "sliding",
+            "artifacts",
+            "plots",
+            f"{run_name}_sensor_trajectories.png",
+        )
 
     max_sensor_speed = float(np.max(np.hypot(u, v)))
 
@@ -221,7 +307,7 @@ def run_experiment_sliding(
 
     iterator = tqdm(intervals, desc="windows") if show_progress else intervals
     for window_idx, (start_idx, end_idx) in enumerate(iterator):
-        if return_paths:
+        if track_sensor_paths:
             lagrangian_history.append(lagrangian_sensor_positions.copy())
             moving_history.append(moving_pod_qr_sensor_positions.copy())
 
@@ -346,26 +432,39 @@ def run_experiment_sliding(
                 }
             )
 
-        if plot_windows and resolved_frames_dir is not None:
-            out_png = os.path.join(resolved_frames_dir, f"frame_{window_idx:04d}.png")
-            save_window_frame(
+        if resolved_flow_frames_dir is not None:
+            flow_out_png = os.path.join(resolved_flow_frames_dir, f"frame_{window_idx:04d}.png")
+            save_flow_field_frame(
                 u_grid=u[t_eval],
                 v_grid=v[t_eval],
                 lx=experiment_config.domain.lx,
                 ly=experiment_config.domain.ly,
-                fixed_sensor_positions=fixed_sensor_positions,
-                lagrangian_sensor_positions=lagrangian_sensor_positions,
-                window_qr_target_positions=window_qr_target_positions,
-                moving_sensor_positions=moving_pod_qr_sensor_positions,
-                window_idx=window_idx,
-                start_idx=start_idx,
-                end_idx=end_idx,
-                t_mid=t_eval,
-                out_path=out_png,
-                l2h_records=records,
-                r_norm_history=r_norm_history,
-                total_windows=total_windows,
+                t_idx=t_eval,
+                out_path=flow_out_png,
+                run_name=run_name,
+                speed_max=max_sensor_speed,
                 quiver_step=experiment_config.quiver_step,
+            )
+
+        if resolved_sensor_motion_frames_dir is not None:
+            moving_frame_history.append(moving_pod_qr_sensor_positions.copy())
+            sensor_motion_out_png = os.path.join(
+                resolved_sensor_motion_frames_dir,
+                f"frame_{window_idx:04d}.png",
+            )
+            save_sensor_motion_frame(
+                u_grid=u[t_eval],
+                v_grid=v[t_eval],
+                lx=experiment_config.domain.lx,
+                ly=experiment_config.domain.ly,
+                moving_history=moving_frame_history,
+                t_idx=t_eval,
+                out_path=sensor_motion_out_png,
+                run_name=run_name,
+                periodic=periodic,
+                speed_max=max_sensor_speed,
+                quiver_step=experiment_config.quiver_step,
+                tail_length=sensor_tail_length,
             )
 
         # Match random_trials movement timing at the midpoint snapshot.
@@ -401,8 +500,32 @@ def run_experiment_sliding(
             moving_flow_history.append(moving_flow_vectors.copy())
 
 
-    if make_gif and resolved_frames_dir is not None and resolved_gif_path is not None:
-        make_window_gif(resolved_frames_dir, resolved_gif_path, duration=gif_duration)
+    if make_flow_gif and resolved_flow_frames_dir is not None and resolved_flow_gif_path is not None:
+        make_window_gif(resolved_flow_frames_dir, resolved_flow_gif_path, duration=gif_duration)
+
+    if (
+        make_sensor_motion_gif
+        and resolved_sensor_motion_frames_dir is not None
+        and resolved_sensor_motion_gif_path is not None
+    ):
+        make_window_gif(
+            resolved_sensor_motion_frames_dir,
+            resolved_sensor_motion_gif_path,
+            duration=gif_duration,
+        )
+
+    if plot_trajectories and resolved_trajectory_plot_path is not None:
+        lagrangian_plot_history = _history_with_final_position(lagrangian_history, lagrangian_sensor_positions)
+        moving_plot_history = _history_with_final_position(moving_history, moving_pod_qr_sensor_positions)
+        save_trajectory_plot(
+            lagrangian_plot_history,
+            moving_plot_history,
+            lx=experiment_config.domain.lx,
+            ly=experiment_config.domain.ly,
+            out_path=resolved_trajectory_plot_path,
+            run_name=run_name,
+            periodic=periodic,
+        )
 
     if r_norm_history:
         r_norm_array = np.asarray(r_norm_history, dtype=float)

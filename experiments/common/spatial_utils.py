@@ -1,5 +1,7 @@
 """Geometry and index-conversion helpers for sensor placement experiments."""
 
+from random import seed
+
 import numpy as np
 
 
@@ -15,6 +17,28 @@ def linspace_interior(length, n, pad_frac=0.15):
         NumPy array of evenly spaced points.
     """
     return np.linspace(pad_frac * length, (1.0 - pad_frac) * length, n)
+
+
+def seed_uniform_random(num_sensors, lx, ly, seed=42):
+    """Sample uniform random sensor coordinates in the physical domain.
+
+    Args:
+        num_sensors: Number of sensors.
+        lx: Domain length in x.
+        ly: Domain length in y.
+        rng: NumPy random generator instance.
+
+    Returns:
+        Array shaped (num_sensors, 2) of sampled coordinates.
+    """
+    rng = np.random.default_rng(seed)
+
+    return np.column_stack(
+        [
+            rng.uniform(0.0, lx, int(num_sensors)),
+            rng.uniform(0.0, ly, int(num_sensors)),
+        ]
+    )
 
 
 def seed_sensor_grid(n, lx, ly):

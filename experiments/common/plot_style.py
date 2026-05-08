@@ -11,6 +11,13 @@ GRID_MAJOR_COLOR = "#D0D7E2"
 GRID_MINOR_COLOR = "#E5EAF1"
 PANEL_FACE_COLOR = "#FBFCFE"
 LEGEND_EDGE_COLOR = "#D0D7E2"
+TEXT_COLOR_DARK = "#F8FAFC"
+SPINE_COLOR_DARK = "#E2E8F0"
+GRID_MAJOR_COLOR_DARK = "#334155"
+GRID_MINOR_COLOR_DARK = "#1E293B"
+PANEL_FACE_COLOR_DARK = "#0F172A"
+FIGURE_FACE_COLOR_DARK = "#020617"
+LEGEND_EDGE_COLOR_DARK = "#475569"
 
 METHOD_COLORS = {
     "Static QR": "#264653",
@@ -94,11 +101,34 @@ PAPER_RC_PARAMS = {
     "ps.fonttype": 42,
 }
 
+PAPER_DARK_RC_PARAMS = PAPER_RC_PARAMS.copy()
+PAPER_DARK_RC_PARAMS.update(
+    {
+        "axes.labelcolor": TEXT_COLOR_DARK,
+        "axes.titlecolor": TEXT_COLOR_DARK,
+        "axes.facecolor": PANEL_FACE_COLOR_DARK,
+        "axes.edgecolor": SPINE_COLOR_DARK,
+        "figure.facecolor": FIGURE_FACE_COLOR_DARK,
+        "savefig.facecolor": FIGURE_FACE_COLOR_DARK,
+        "legend.edgecolor": LEGEND_EDGE_COLOR_DARK,
+        "xtick.color": TEXT_COLOR_DARK,
+        "ytick.color": TEXT_COLOR_DARK,
+        "grid.color": GRID_MAJOR_COLOR_DARK,
+    }
+)
+
 
 @contextmanager
 def paper_plot_context():
     """Temporarily apply a paper-style Matplotlib configuration."""
     with plt.rc_context(PAPER_RC_PARAMS):
+        yield
+
+
+@contextmanager
+def paper_dark_plot_context():
+    """Temporarily apply a dark paper-style Matplotlib configuration."""
+    with plt.rc_context(PAPER_DARK_RC_PARAMS):
         yield
 
 
@@ -157,6 +187,26 @@ def apply_axis_style(axis, *, x_grid=False, y_grid=True):
             axis.spines[spine_name].set_linewidth(0.9)
 
 
+def apply_dark_axis_style(axis, *, x_grid=False, y_grid=True):
+    """Apply polished academic-style dark axis cosmetics."""
+    axis.set_facecolor(PANEL_FACE_COLOR_DARK)
+    axis.tick_params(width=0.9, colors=TEXT_COLOR_DARK)
+    axis.minorticks_on()
+
+    axis.grid(False)
+    if x_grid:
+        axis.xaxis.grid(True, which="major", color=GRID_MAJOR_COLOR_DARK, linewidth=0.75)
+        axis.xaxis.grid(True, which="minor", color=GRID_MINOR_COLOR_DARK, linewidth=0.5, alpha=0.8)
+    if y_grid:
+        axis.yaxis.grid(True, which="major", color=GRID_MAJOR_COLOR_DARK, linewidth=0.75)
+        axis.yaxis.grid(True, which="minor", color=GRID_MINOR_COLOR_DARK, linewidth=0.5, alpha=0.8)
+
+    for spine_name in ("left", "bottom"):
+        if spine_name in axis.spines:
+            axis.spines[spine_name].set_color(SPINE_COLOR_DARK)
+            axis.spines[spine_name].set_linewidth(0.9)
+
+
 def finalize_legend(axis, **legend_kwargs):
     """Create a polished legend and normalize its frame styling."""
     legend = axis.legend(**legend_kwargs)
@@ -167,4 +217,25 @@ def finalize_legend(axis, **legend_kwargs):
     frame.set_facecolor("white")
     frame.set_edgecolor(LEGEND_EDGE_COLOR)
     frame.set_linewidth(0.8)
+    return legend
+
+
+def finalize_dark_legend(axis, **legend_kwargs):
+    """Create a polished legend for dark figures and normalize its frame styling."""
+    legend = axis.legend(**legend_kwargs)
+    if legend is None:
+        return None
+
+    frame = legend.get_frame()
+    frame.set_facecolor("#0B1220")
+    frame.set_edgecolor(LEGEND_EDGE_COLOR_DARK)
+    frame.set_linewidth(0.8)
+
+    for text in legend.get_texts():
+        text.set_color(TEXT_COLOR_DARK)
+
+    title = legend.get_title()
+    if title is not None:
+        title.set_color(TEXT_COLOR_DARK)
+
     return legend

@@ -3,6 +3,7 @@
 from pathlib import Path
 
 import matplotlib.pyplot as plt
+from matplotlib.patches import Patch
 import pandas as pd
 
 from .plot_style import (
@@ -167,12 +168,13 @@ def plot_l2h_timeseries(results, label_key=None):
     return pivot_df
 
 
-def save_mean_l2h_vs_sensor_count(aggregated_df, output_dir):
+def save_mean_l2h_vs_sensor_count(aggregated_df, output_dir, combo_order=None):
     """Save per-flow line plots of mean relative L2_h error vs sensor count.
 
     Args:
         aggregated_df: DataFrame containing flow, num_sensors, method, basis, L2_h.
         output_dir: Directory path for plot files.
+        combo_order: Optional ordered subset of "method | basis" series to plot.
 
     Returns:
         None.
@@ -193,6 +195,11 @@ def save_mean_l2h_vs_sensor_count(aggregated_df, output_dir):
             )
             .sort_index()
         )
+        if combo_order is not None:
+            ordered_columns = [combo_label for combo_label in combo_order if combo_label in pivot_df.columns]
+            pivot_df = pivot_df[ordered_columns]
+            if pivot_df.empty:
+                continue
 
         with paper_plot_context():
             fig, axis = plt.subplots(figsize=(10.4, 5.4), constrained_layout=True)
@@ -351,6 +358,146 @@ def save_boxplots_per_flow(raw_df, output_dir, placement_order=None):
             apply_axis_style(axis, x_grid=True, y_grid=False)
             fig.savefig(output_dir / f"{flow_name}_l2h_boxplot.png")
             plt.close(fig)
+
+
+def save_boxplots_grid_by_flow(
+    raw_df,
+    output_dir,
+    placement_order=None,
+    flow_order=None,
+    filename="all_flows_l2h_boxplots.png",
+):
+    """Save one 2x2 grid of horizontal relative L2_h error boxplots by flow.
+
+    Args:
+        raw_df: DataFrame with flow, placement, L2_h columns.
+        output_dir: Directory path for plot files.
+        placement_order: Optional ordered list for placement axis.
+        flow_order: Optional ordered list for subplot order.
+        filename: Output image filename.
+
+    Returns:
+        Path to the saved figure.
+    """
+    output_dir = Path(output_dir)
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    if flow_order is None:
+        flow_order_use = sorted(raw_df["flow"].dropna().unique())
+    else:
+        flow_order_use = [flow_name for flow_name in flow_order if flow_name in set(raw_df["flow"].dropna())]
+        remaining_flows = [
+            flow_name
+            for flow_name in sorted(raw_df["flow"].dropna().unique())
+            if flow_name not in set(flow_order_use)
+        ]
+        flow_order_use.extend(remaining_flows)
+
+    if not flow_order_use:
+        raise ValueError("raw_df must contain at least one flow with boxplot data")
+
+    with paper_plot_context():
+        fig, axes = plt.subplots(2, 2, figsize=(12.4, 8.2), sharex=True, constrained_layout=True)
+        axes_flat = axes.ravel()
+
+        legend_placements = []
+        for axis, flow_name in zip(axes_flat, flow_order_use):
+            flow_df = raw_df[raw_df["flow"] == flow_name].copy()
+
+            if placement_order is not None:
+                flow_df["placement"] = pd.Categorical(
+                    flow_df["placement"],
+                    categories=placement_order,
+                    ordered=True,
+                )
+                flow_df = flow_df.sort_values("placement")
+
+            placement_order_use = list(flow_df["placement"].dropna().unique())
+            series_data = []
+            placement_labels = []
+            placement_names = []
+            for placement_name in placement_order_use:
+                values = flow_df.loc[flow_df["placement"] == placement_name, METRIC_COLUMN].dropna()
+                if not values.empty:
+                    placement_names.append(str(placement_name))
+                    placement_labels.append(display_label(placement_name))
+                    series_data.append(values.to_numpy())
+
+            if not series_data:
+                axis.set_axis_off()
+                continue
+
+            boxplot = axis.boxplot(
+                series_data,
+                labels=placement_labels,
+                vert=False,
+                patch_artist=True,
+                showfliers=True,
+                whis=[5, 95],
+                medianprops={"color": "#111827", "linewidth": 1.4},
+                whiskerprops={"color": "#475467", "linewidth": 0.95},
+                capprops={"color": "#475467", "linewidth": 0.95},
+                flierprops={
+                    "marker": "o",
+                    "markersize": 3.2,
+                    "markerfacecolor": "#98A2B3",
+                    "markeredgecolor": "#98A2B3",
+                    "alpha": 0.48,
+                },
+            )
+
+            for patch, placement_name in zip(boxplot["boxes"], placement_names):
+                patch.set_facecolor(color_for_method(placement_name))
+                patch.set_alpha(0.62)
+                patch.set_edgecolor("#344054")
+                patch.set_linewidth(0.85)
+
+            axis.set_xscale("log")
+            axis.set_title(pretty_flow_name(flow_name))
+            axis.set_xlabel(METRIC_LABEL)
+            axis.set_ylabel("Method")
+            apply_axis_style(axis, x_grid=True, y_grid=False)
+            legend_placements.extend(placement_names)
+
+        for axis in axes_flat[len(flow_order_use) :]:
+            axis.set_axis_off()
+
+        ordered_legend_placements = []
+        if placement_order is not None:
+            ordered_legend_placements.extend(
+                placement_name for placement_name in placement_order if placement_name in set(legend_placements)
+            )
+        ordered_legend_placements.extend(
+            placement_name
+            for placement_name in sorted(set(legend_placements))
+            if placement_name not in set(ordered_legend_placements)
+        )
+        legend_handles = [
+            Patch(
+                facecolor=color_for_method(placement_name),
+                edgecolor="#344054",
+                alpha=0.62,
+                label=display_label(placement_name),
+            )
+            for placement_name in ordered_legend_placements
+        ]
+        legend = fig.legend(
+            handles=legend_handles,
+            title="Method",
+            loc="upper right",
+            bbox_to_anchor=(0.995, 0.995),
+            ncol=1,
+        )
+        if legend is not None:
+            frame = legend.get_frame()
+            frame.set_facecolor("white")
+            frame.set_edgecolor("#D0D7E2")
+            frame.set_linewidth(0.8)
+
+        out_path = output_dir / filename
+        fig.savefig(out_path)
+        plt.close(fig)
+    return out_path
 
 
 def plot_grouped_rmse_summary(results, label_key=None):

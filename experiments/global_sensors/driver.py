@@ -11,12 +11,11 @@ from experiments.common.plotting import save_grouped_barh_by_flow, save_mean_l2h
 from experiments.global_sensors.pipeline import run_pod_basis_comparison
 
 
-TOTAL_STEPS = 160
+TOTAL_STEPS = 700
 PERIOD = 80
-FLOW_NAMES = ["double_gyre", "moving_vortex", "kolmogorov", "cylinder_wake"]
+FLOW_NAMES = ["kolmogorov"] # ["double_gyre", "moving_vortex", "kolmogorov", "cylinder_wake"]
 
 SENSOR_COUNTS = [1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16]
-MAX_BASIS_DIM = 10
 SEED = 90
 
 WINDOW_LEN = 13
@@ -29,6 +28,11 @@ AGGREGATED_CSV_NAME = "aggregated_mean_l2h.csv"
 
 METHOD_ORDER = ["Static QR", "Teleport QR", "Lagrangian", "Moving QR"]
 BASIS_ORDER = ["Global POD", "Window POD"]
+LINE_PLOT_COMBO_ORDER = [
+    "Moving QR | Window POD",
+    "Static QR | Window POD",
+    "Teleport QR | Window POD",
+]
 
 
 def _run_single_sensor_count(flow_case, num_sensors):
@@ -44,7 +48,7 @@ def _run_single_sensor_count(flow_case, num_sensors):
     experiment_config = ExperimentConfig(
         domain=flow_case.domain_config,
         num_sensors=num_sensors,
-        max_basis_dim=MAX_BASIS_DIM,
+        max_basis_dim=num_sensors,
         seed=SEED,
     )
 
@@ -106,7 +110,11 @@ def main():
     print(f"Saved raw records to {raw_csv_path}")
     print(f"Saved aggregated records to {aggregated_csv_path}")
 
-    save_mean_l2h_vs_sensor_count(aggregated_df, artifact_paths.plots_dir)
+    save_mean_l2h_vs_sensor_count(
+        aggregated_df,
+        artifact_paths.plots_dir,
+        combo_order=LINE_PLOT_COMBO_ORDER,
+    )
     save_grouped_barh_by_flow(
         aggregated_df,
         artifact_paths.plots_dir,

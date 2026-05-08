@@ -11,9 +11,9 @@ from experiments.common.plotting import save_boxplots_per_flow
 from experiments.random_trials.pipeline import run_random_trials_window_pod
 
 
-TOTAL_STEPS = 160
+TOTAL_STEPS = 200
 PERIOD = 80
-FLOW_NAMES = ['kolmogorov']# ["double_gyre", "moving_vortex", "kolmogorov", "cylinder_wake"]
+FLOW_NAMES = ["double_gyre", "moving_vortex", "cylinder_wake"] # "kolmogorov"
 
 NUM_SENSORS = 10
 N_TRIALS = 50

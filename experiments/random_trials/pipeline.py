@@ -6,7 +6,7 @@ from tqdm.auto import tqdm
 
 from experiments.common.config import config_from_arrays
 from experiments.common.sensor_motion import advect, advect_hungarian, bounce_apart
-from experiments.common.spatial_utils import coords_to_linear_index, grid_to_phys
+from experiments.common.spatial_utils import coords_to_linear_index, grid_to_phys, seed_uniform_random
 from experiments.common.state_reconstruction import (
     fit_sspor_model,
     flatten_state,
@@ -16,24 +16,7 @@ from experiments.common.state_reconstruction import (
 from experiments.common.windowing import get_sliding_intervals
 
 
-def _seed_uniform_random(num_sensors, lx, ly, rng):
-    """Sample uniform random sensor coordinates in the physical domain.
 
-    Args:
-        num_sensors: Number of sensors.
-        lx: Domain length in x.
-        ly: Domain length in y.
-        rng: NumPy random generator instance.
-
-    Returns:
-        Array shaped (num_sensors, 2) of sampled coordinates.
-    """
-    return np.column_stack(
-        [
-            rng.uniform(0.0, lx, int(num_sensors)),
-            rng.uniform(0.0, ly, int(num_sensors)),
-        ]
-    )
 
 
 def run_random_trials_window_pod(
@@ -98,16 +81,15 @@ def run_random_trials_window_pod(
     dy = experiment_config.domain.ly / ny
     max_sensor_speed = float(np.max(np.hypot(u, v)))
 
-    rng = np.random.default_rng(seed)
     records = []
 
     trial_iterator = tqdm(range(int(n_trials)), desc="random-trials") if show_progress else range(int(n_trials))
     for trial_idx in trial_iterator:
-        initial_sensor_positions = _seed_uniform_random(
+        initial_sensor_positions = seed_uniform_random(
             experiment_config.num_sensors,
             experiment_config.domain.lx,
             experiment_config.domain.ly,
-            rng,
+            seed=seed,
         )
 
         fixed_sensor_positions = initial_sensor_positions.copy()
