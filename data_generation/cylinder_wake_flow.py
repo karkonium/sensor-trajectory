@@ -92,8 +92,12 @@ def generate_cylinder_wake_from_netcdf(
         y_vals = ds[y_dim].values
         t_vals = ds[time_dim].values
 
-        lx = float(np.max(x_vals) - np.min(x_vals))
-        ly = float(np.max(y_vals) - np.min(y_vals))
+        x_min = float(np.min(x_vals))
+        x_max = float(np.max(x_vals))
+        y_min = float(np.min(y_vals))
+        y_max = float(np.max(y_vals))
+        lx = x_max - x_min
+        ly = y_max - y_min
 
         dt_raw = t_vals[1] - t_vals[0]
         if np.issubdtype(type(dt_raw), np.timedelta64):
@@ -104,6 +108,10 @@ def generate_cylinder_wake_from_netcdf(
         meta = {
             "nx": int(nx),
             "ny": int(ny),
+            "x_min": x_min,
+            "x_max": x_max,
+            "y_min": y_min,
+            "y_max": y_max,
             "lx": lx,
             "ly": ly,
             "dt": dt,
