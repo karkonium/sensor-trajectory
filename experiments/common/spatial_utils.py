@@ -19,7 +19,7 @@ def linspace_interior(length, n, pad_frac=0.15):
     return np.linspace(pad_frac * length, (1.0 - pad_frac) * length, n)
 
 
-def seed_uniform_random(num_sensors, lx, ly, seed=42):
+def seed_uniform_random(num_sensors, lx, ly, seed=100):
     """Sample uniform random sensor coordinates in the physical domain.
 
     Args:

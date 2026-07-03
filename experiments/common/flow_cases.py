@@ -96,7 +96,7 @@ def _generate_double_gyre_case(total_steps, period):
         u=u,
         v=v,
         domain_config=DomainConfig(nx=nx, ny=ny, lx=lx, ly=ly),
-        dt_actual=1.0,
+        dt_actual=0.0625,
         is_periodic=False,
     )
 
@@ -119,7 +119,7 @@ def _generate_moving_vortex_case(total_steps, period):
         u=u,
         v=v,
         domain_config=DomainConfig(nx=nx, ny=ny, lx=lx, ly=ly),
-        dt_actual=1.0,
+        dt_actual=(0.25 / 3),
         is_periodic=False,
     )
 
@@ -152,7 +152,7 @@ def _generate_kolmogorov_case(total_steps):
         u_raw,
         v_raw,
         total_steps=total_steps,
-        start_idx=1799,
+        start_idx=1299,
         end_idx=1999,
         original_dt=stored_snapshot_dt,
     )
@@ -173,18 +173,21 @@ def _generate_kolmogorov_case(total_steps):
     )
 
 
-def _generate_cylinder_wake_case():
+def _generate_cylinder_wake_case(total_steps=None):
     """Load and sample the canonical precomputed cylinder-wake test case.
 
     Args:
-        None.
+        total_steps: Number of uniformly sampled snapshots. Defaults to 400.
 
     Returns:
         FlowCasePayload for cylinder wake.
     """
     u_raw, v_raw, meta = generate_cylinder_wake_from_netcdf()
 
-    cylinder_steps = 400
+    cylinder_steps = 400 if total_steps is None else int(total_steps)
+    if cylinder_steps <= 1:
+        raise ValueError("Cylinder wake total_steps must be > 1")
+
     sample_indices = np.linspace(
         int(u_raw.shape[0] // 2),
         int(u_raw.shape[0] - 1),
@@ -214,6 +217,8 @@ def _generate_cylinder_wake_case():
             ny=meta["ny"],
             lx=meta["lx"],
             ly=meta["ly"],
+            x_min=meta.get("x_min", 0.0),
+            y_min=meta.get("y_min", 0.0),
         ),
         dt_actual=dt_advect,
         is_periodic=False,
@@ -246,7 +251,7 @@ def generate_standard_flow_cases(total_steps=160, period=80, flow_names=None):
             payloads.append(_generate_kolmogorov_case(total_steps))
             continue
         if flow_name == "cylinder_wake":
-            payloads.append(_generate_cylinder_wake_case())
+            payloads.append(_generate_cylinder_wake_case(total_steps))
             continue
 
         raise ValueError(f"Unsupported flow case name: {flow_name!r}")

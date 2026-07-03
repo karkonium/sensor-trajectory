@@ -13,7 +13,7 @@ from experiments.global_sensors.pipeline import run_pod_basis_comparison
 
 TOTAL_STEPS = 700
 PERIOD = 80
-FLOW_NAMES = ["kolmogorov"] # ["double_gyre", "moving_vortex", "kolmogorov", "cylinder_wake"]
+FLOW_NAMES = ["double_gyre", "moving_vortex", "kolmogorov", "cylinder_wake"]
 
 SENSOR_COUNTS = [1, 2, 3, 4, 5, 6, 7, 8, 10, 12, 14, 16]
 SEED = 90
@@ -32,6 +32,7 @@ LINE_PLOT_COMBO_ORDER = [
     "Moving QR | Window POD",
     "Static QR | Window POD",
     "Teleport QR | Window POD",
+    "Lagrangian | Window POD",
 ]
 
 

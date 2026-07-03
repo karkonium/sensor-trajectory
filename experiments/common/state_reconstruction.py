@@ -142,6 +142,42 @@ def l2h_norm(state_vector, dx, dy):
     return float(np.sqrt(dx * dy) * np.linalg.norm(np.asarray(state_vector, dtype=float).ravel()))
 
 
+def _as_feature_by_mode_basis(basis_matrix, grid_n):
+    """Return basis matrix with shape (2 * grid_n, n_modes)."""
+    basis_matrix_use = np.asarray(basis_matrix, dtype=float)
+    if basis_matrix_use.shape[0] != 2 * grid_n and basis_matrix_use.shape[1] == 2 * grid_n:
+        basis_matrix_use = basis_matrix_use.T
+    if basis_matrix_use.shape[0] != 2 * grid_n:
+        raise ValueError(
+            f"basis_matrix has unexpected shape {basis_matrix.shape}; "
+            f"expected (2*grid_n, r) or (r, 2*grid_n)"
+        )
+    return basis_matrix_use
+
+
+def reconstruct_state_with_basis_matrix(state_vector, node_idx, basis_matrix, grid_n):
+    """Reconstruct one flattened [u, v] state from paired node measurements.
+
+    Args:
+        state_vector: Full flattened state vector or single-row state matrix.
+        node_idx: Scalar-node sensor indices.
+        basis_matrix: Basis matrix shaped (2*grid_n, r) or transposed.
+        grid_n: Number of scalar nodes per velocity component.
+
+    Returns:
+        Reconstructed flattened state vector.
+    """
+    sensor_indices_uv = measurement_indices_uv(node_idx, grid_n)
+    true_state = np.asarray(state_vector, dtype=float).reshape(1, -1)
+    basis_matrix_use = _as_feature_by_mode_basis(basis_matrix, grid_n)
+
+    sampled_state = true_state[:, sensor_indices_uv]
+    sampled_basis = basis_matrix_use[sensor_indices_uv, :]
+    sampled_basis_pinv = np.linalg.pinv(sampled_basis)
+    reconstructed_state = (sampled_state @ sampled_basis_pinv.T) @ basis_matrix_use.T
+    return reconstructed_state.ravel()
+
+
 def relative_l2h_error_with_basis_matrix(full_state_matrix, t_idx, node_idx, basis_matrix, grid_n, dx, dy):
     """Reconstruct one state at a time index and score relative L2_h error.
 
@@ -157,23 +193,8 @@ def relative_l2h_error_with_basis_matrix(full_state_matrix, t_idx, node_idx, bas
     Returns:
         Scalar relative L2_h reconstruction error.
     """
-    sensor_indices_uv = measurement_indices_uv(node_idx, grid_n)
-
-    true_state = np.asarray(full_state_matrix[t_idx : t_idx + 1], dtype=float)
-    sampled_state = true_state[:, sensor_indices_uv]
-
-    basis_matrix_use = np.asarray(basis_matrix, dtype=float)
-    if basis_matrix_use.shape[0] != 2 * grid_n and basis_matrix_use.shape[1] == 2 * grid_n:
-        basis_matrix_use = basis_matrix_use.T
-    if basis_matrix_use.shape[0] != 2 * grid_n:
-        raise ValueError(
-            f"basis_matrix has unexpected shape {basis_matrix.shape}; "
-            f"expected (2*grid_n, r) or (r, 2*grid_n)"
-        )
-
-    sampled_basis = basis_matrix_use[sensor_indices_uv, :]
-    sampled_basis_pinv = np.linalg.pinv(sampled_basis)
-    reconstructed_state = (sampled_state @ sampled_basis_pinv.T) @ basis_matrix_use.T
+    true_state = np.asarray(full_state_matrix[t_idx], dtype=float).ravel()
+    reconstructed_state = reconstruct_state_with_basis_matrix(true_state, node_idx, basis_matrix, grid_n)
 
     error_norm = l2h_norm(true_state - reconstructed_state, dx, dy)
     true_norm = l2h_norm(true_state, dx, dy)
@@ -195,24 +216,8 @@ def rmse_with_basis_matrix(full_state_matrix, t_idx, node_idx, basis_matrix, gri
     Returns:
         Scalar RMSE score averaged across u and v components.
     """
-    sensor_indices_uv = measurement_indices_uv(node_idx, grid_n)
-
-    true_state = full_state_matrix[t_idx : t_idx + 1]
-    sampled_state = true_state[:, sensor_indices_uv]
-
-    basis_matrix_use = basis_matrix
-    if basis_matrix_use.shape[0] != 2 * grid_n and basis_matrix_use.shape[1] == 2 * grid_n:
-        basis_matrix_use = basis_matrix_use.T
-    if basis_matrix_use.shape[0] != 2 * grid_n:
-        raise ValueError(
-            f"basis_matrix has unexpected shape {basis_matrix.shape}; "
-            f"expected (2*grid_n, r) or (r, 2*grid_n)"
-        )
-
-    sampled_basis = basis_matrix_use[sensor_indices_uv, :]
-    sampled_basis_pinv = np.linalg.pinv(sampled_basis)
-
-    reconstructed_state = (sampled_state @ sampled_basis_pinv.T) @ basis_matrix_use.T
+    true_state = np.asarray(full_state_matrix[t_idx : t_idx + 1], dtype=float)
+    reconstructed_state = reconstruct_state_with_basis_matrix(true_state, node_idx, basis_matrix, grid_n)[None, :]
 
     u_true, v_true = split_state(true_state, 2 * nx, ny, horizontal_concat=False)
     u_recon, v_recon = split_state(reconstructed_state, 2 * nx, ny, horizontal_concat=False)

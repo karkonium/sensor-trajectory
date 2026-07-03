@@ -148,6 +148,74 @@ def _history_with_final_position(history, final_positions):
     return np.concatenate([np.stack(history), final_positions[None, ...]], axis=0)
 
 
+def _trajectory_flow_snapshots(
+    u,
+    v,
+    lagrangian_history=None,
+    moving_history=None,
+    history_time_indices=None,
+    snapshot_time_indices=None,
+):
+    """Collect flow snapshots and matching sensor positions for the trajectory summary."""
+    total_steps = int(u.shape[0])
+    if snapshot_time_indices is None:
+        snapshot_specs = (
+            ("Start", 0),
+            ("Middle", total_steps // 2),
+            ("End", total_steps - 1),
+        )
+    else:
+        snapshot_time_indices = [int(t_idx) for t_idx in snapshot_time_indices]
+        if len(snapshot_time_indices) != 3:
+            raise ValueError("trajectory_snapshot_indices must contain exactly three time indices")
+        for t_idx in snapshot_time_indices:
+            if t_idx < 0 or t_idx >= total_steps:
+                raise ValueError(
+                    "trajectory_snapshot_indices must be within the available time range "
+                    f"[0, {total_steps - 1}]"
+                )
+        snapshot_specs = tuple(
+            (f"Snapshot {snapshot_idx + 1}", t_idx)
+            for snapshot_idx, t_idx in enumerate(snapshot_time_indices)
+        )
+
+    has_sensor_positions = (
+        lagrangian_history is not None
+        and moving_history is not None
+        and history_time_indices is not None
+    )
+    if has_sensor_positions:
+        lagrangian_history = np.asarray(lagrangian_history, dtype=float)
+        moving_history = np.asarray(moving_history, dtype=float)
+        history_time_indices = np.asarray(history_time_indices, dtype=int)
+        if (
+            lagrangian_history.shape[0] != moving_history.shape[0]
+            or lagrangian_history.shape[0] != history_time_indices.shape[0]
+        ):
+            raise ValueError("Trajectory histories and time indices must have matching lengths")
+
+    snapshots = []
+    for label, t_idx in snapshot_specs:
+        snapshot = {
+            "label": label,
+            "t_idx": int(t_idx),
+            "u_grid": np.asarray(u[t_idx], dtype=float).copy(),
+            "v_grid": np.asarray(v[t_idx], dtype=float).copy(),
+        }
+        if has_sensor_positions:
+            history_idx = int(np.argmin(np.abs(history_time_indices - int(t_idx))))
+            snapshot["history_idx"] = history_idx
+            snapshot["history_t_idx"] = int(history_time_indices[history_idx])
+            snapshot["lagrangian_history"] = lagrangian_history[: history_idx + 1].copy()
+            snapshot["moving_history"] = moving_history[: history_idx + 1].copy()
+            snapshot["lagrangian_positions"] = lagrangian_history[history_idx].copy()
+            snapshot["moving_positions"] = moving_history[history_idx].copy()
+
+        snapshots.append(snapshot)
+
+    return snapshots
+
+
 def run_experiment_sliding(
     u,
     v,
@@ -168,6 +236,7 @@ def run_experiment_sliding(
     sensor_tail_length=48,
     plot_trajectories=False,
     trajectory_plot_path=None,
+    trajectory_snapshot_indices=None,
     gif_duration=0.10,
     run_name="run",
     show_progress=True,
@@ -194,6 +263,7 @@ def run_experiment_sliding(
         sensor_tail_length: Number of recent steps to retain in the fading sensor tail.
         plot_trajectories: Whether to save a final sensor-trajectory summary plot.
         trajectory_plot_path: Optional output path for the trajectory plot PNG.
+        trajectory_snapshot_indices: Optional three time indices to show in the trajectory summary.
         gif_duration: GIF frame duration in seconds.
         run_name: Run label used in default output paths.
         show_progress: Whether to show tqdm progress.
@@ -234,6 +304,7 @@ def run_experiment_sliding(
         experiment_config.num_sensors,
         experiment_config.domain.lx,
         experiment_config.domain.ly,
+        seed=experiment_config.seed,
     )
 
     moving_pod_qr_sensor_positions = lagrangian_sensor_positions.copy()
@@ -244,6 +315,7 @@ def run_experiment_sliding(
     moving_frame_history = []
     moving_heading_history = []
     moving_flow_history = []
+    trajectory_history_times = []
 
     records = []
     r_norm_history = []
@@ -307,13 +379,15 @@ def run_experiment_sliding(
 
     iterator = tqdm(intervals, desc="windows") if show_progress else intervals
     for window_idx, (start_idx, end_idx) in enumerate(iterator):
+        # Midpoint snapshot used for this window's reconstruction diagnostics.
+        t_eval = (start_idx + (end_idx - 1)) // 2
         if track_sensor_paths:
             lagrangian_history.append(lagrangian_sensor_positions.copy())
             moving_history.append(moving_pod_qr_sensor_positions.copy())
+            trajectory_history_times.append(t_eval)
 
         # Fit POD/QR on the current window; keep midpoint diagnostics while
         # scoring relative L2_h error at the midpoint snapshot.
-        t_eval = (start_idx + (end_idx - 1)) // 2
         window_state_matrix = flatten_state(u[start_idx : end_idx - 1], v[start_idx : end_idx - 1])
 
         window_sspor_model = fit_sspor_model(
@@ -444,6 +518,8 @@ def run_experiment_sliding(
                 run_name=run_name,
                 speed_max=max_sensor_speed,
                 quiver_step=experiment_config.quiver_step,
+                x_origin=experiment_config.domain.x_min,
+                y_origin=experiment_config.domain.y_min,
             )
 
         if resolved_sensor_motion_frames_dir is not None:
@@ -465,6 +541,8 @@ def run_experiment_sliding(
                 speed_max=max_sensor_speed,
                 quiver_step=experiment_config.quiver_step,
                 tail_length=sensor_tail_length,
+                x_origin=experiment_config.domain.x_min,
+                y_origin=experiment_config.domain.y_min,
             )
 
         # Match random_trials movement timing at the midpoint snapshot.
@@ -517,6 +595,7 @@ def run_experiment_sliding(
     if plot_trajectories and resolved_trajectory_plot_path is not None:
         lagrangian_plot_history = _history_with_final_position(lagrangian_history, lagrangian_sensor_positions)
         moving_plot_history = _history_with_final_position(moving_history, moving_pod_qr_sensor_positions)
+        trajectory_plot_times = np.asarray(trajectory_history_times + [total_steps - 1], dtype=int)
         save_trajectory_plot(
             lagrangian_plot_history,
             moving_plot_history,
@@ -525,6 +604,18 @@ def run_experiment_sliding(
             out_path=resolved_trajectory_plot_path,
             run_name=run_name,
             periodic=periodic,
+            flow_snapshots=_trajectory_flow_snapshots(
+                u,
+                v,
+                lagrangian_history=lagrangian_plot_history,
+                moving_history=moving_plot_history,
+                history_time_indices=trajectory_plot_times,
+                snapshot_time_indices=trajectory_snapshot_indices,
+            ),
+            flow_speed_max=max_sensor_speed,
+            quiver_step=experiment_config.quiver_step,
+            x_origin=experiment_config.domain.x_min,
+            y_origin=experiment_config.domain.y_min,
         )
 
     if r_norm_history:

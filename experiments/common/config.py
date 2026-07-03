@@ -4,13 +4,15 @@
 class DomainConfig:
     """Grid/domain metadata for velocity fields with shape (T, nx, ny)."""
 
-    def __init__(self, nx, ny, lx=1.0, ly=1.0):
+    def __init__(self, nx, ny, lx=1.0, ly=1.0, x_min=0.0, y_min=0.0):
         """
         Args:
             nx: Number of grid points along x.
             ny: Number of grid points along y.
             lx: Physical domain length in x.
             ly: Physical domain length in y.
+            x_min: Physical lower x-coordinate used for plotting.
+            y_min: Physical lower y-coordinate used for plotting.
 
         Returns:
             None.
@@ -24,6 +26,18 @@ class DomainConfig:
         self.ny = int(ny)
         self.lx = float(lx)
         self.ly = float(ly)
+        self.x_min = float(x_min)
+        self.y_min = float(y_min)
+
+    @property
+    def x_max(self):
+        """Physical upper x-coordinate used for plotting."""
+        return self.x_min + self.lx
+
+    @property
+    def y_max(self):
+        """Physical upper y-coordinate used for plotting."""
+        return self.y_min + self.ly
 
 
 class ExperimentConfig:
@@ -61,6 +75,8 @@ def config_from_arrays(
     u_shape,
     lx=1.0,
     ly=1.0,
+    x_min=0.0,
+    y_min=0.0,
     num_sensors=10,
     max_basis_dim=10,
     seed=90,
@@ -71,6 +87,8 @@ def config_from_arrays(
         u_shape: Tuple shaped as (T, nx, ny).
         lx: Physical domain length in x.
         ly: Physical domain length in y.
+        x_min: Physical lower x-coordinate used for plotting.
+        y_min: Physical lower y-coordinate used for plotting.
         num_sensors: Number of sensors to place.
         max_basis_dim: Maximum POD basis dimension.
         seed: Random seed.
@@ -83,7 +101,7 @@ def config_from_arrays(
 
     _, nx, ny = u_shape
     return ExperimentConfig(
-        domain=DomainConfig(nx=nx, ny=ny, lx=lx, ly=ly),
+        domain=DomainConfig(nx=nx, ny=ny, lx=lx, ly=ly, x_min=x_min, y_min=y_min),
         num_sensors=num_sensors,
         max_basis_dim=max_basis_dim,
         seed=seed,

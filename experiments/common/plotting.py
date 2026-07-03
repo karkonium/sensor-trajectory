@@ -37,7 +37,7 @@ def _display_combo_label(combo_label):
     method_name, basis_name = _split_combo_label(combo_label)
     if basis_name is None:
         return display_label(method_name)
-    return f"{display_label(method_name)} | {basis_name}"
+    return f"{display_label(method_name)}"
 
 
 def plot_grouped_l2h_summary(results, label_key=None):
@@ -149,7 +149,7 @@ def plot_l2h_timeseries(results, label_key=None):
                 pivot_df[combo_label],
                 label=display_combo_label,
                 color=color_for_method(method_name),
-                linestyle=linestyle_for_basis(basis_name),
+                linestyle="-",
                 marker=marker_for_basis(basis_name),
                 markerfacecolor="white",
                 markeredgewidth=1.1,

@@ -10,23 +10,45 @@ from experiments.common.paths import build_artifact_paths, ensure_artifact_dirs
 from experiments.sliding.pipeline import run_experiment_sliding
 
 
-TOTAL_STEPS = 200
-PERIOD = 80
-FLOW_NAMES = ["double_gyre", "moving_vortex", "kolmogorov", "cylinder_wake"]
-
-NUM_SENSORS = 10
-MAX_BASIS_DIM = 10
-SEED = 90
-
-WINDOW_LEN = 13
-STEP_SIZE = 1
-MIN_DIST_PCT = 0.05
-
-SHOW_PROGRESS = True
-PLOT_WINDOWS = True
-SAVE_WINDOW_FRAMES = True
-MAKE_GIF = True
-GIF_DURATION = 0.10
+FLOW_NAMES = ["cylinder_wake", "kolmogorov", "moving_vortex", "double_gyre"]
+DEFAULT_FLOW_CONFIG = {
+    "total_steps": 200,
+    "period": 80,
+    "num_sensors": 4,
+    "max_basis_dim": 4,
+    "seed": 910,
+    "window_len": 13,
+    "step_size": 1,
+    "min_dist_pct": 0.05,
+    "quiver_step": 4,
+    "show_progress": True,
+    "plot_windows": True,
+    "plot_trajectories": True,
+    "save_window_frames": True,
+    "make_flow_gif": True,
+    "make_sensor_motion_gif": True,
+    "gif_duration": 0.10,
+    "sensor_tail_length": 100,
+    "trajectory_snapshot_indices": None,
+}
+FLOW_CONFIGS = {
+    "double_gyre": {
+        "total_steps": 200,
+        "trajectory_snapshot_indices": [0, 100, 199],
+    },
+    "kolmogorov": {
+        "trajectory_snapshot_indices": [0, 100, 199],
+    },
+    "cylinder_wake": {
+        "seed": 300,
+        "trajectory_snapshot_indices": [0, 100, 199],
+    },
+    "moving_vortex": {
+        "total_steps": 100,
+        "period": 200,
+        "trajectory_snapshot_indices": [0, 50, 99],
+    },
+}
 
 SAVE_RAW_CSV = True
 SAVE_AGGREGATED_CSV = True
@@ -37,19 +59,23 @@ AGGREGATED_CSV_NAME = "aggregated_mean_l2h.csv"
 def _hyperparams_dict():
     """Return the sliding experiment hyperparameters."""
     return {
-        "total_steps": TOTAL_STEPS,
-        "period": PERIOD,
         "flow_names": FLOW_NAMES,
-        "num_sensors": NUM_SENSORS,
-        "max_basis_dim": MAX_BASIS_DIM,
-        "seed": SEED,
-        "window_len": WINDOW_LEN,
-        "step_size": STEP_SIZE,
-        "min_dist_pct": MIN_DIST_PCT,
+        "default_flow_config": DEFAULT_FLOW_CONFIG,
+        "flow_configs": {
+            flow_name: _resolved_flow_config(flow_name)
+            for flow_name in FLOW_NAMES
+        },
     }
 
 
-def _run_single_flow(flow_case, artifact_paths):
+def _resolved_flow_config(flow_name):
+    """Return the effective sliding config for one flow."""
+    flow_config = DEFAULT_FLOW_CONFIG.copy()
+    flow_config.update(FLOW_CONFIGS.get(flow_name, {}))
+    return flow_config
+
+
+def _run_single_flow(flow_case, artifact_paths, flow_config):
     """Run sliding experiment for one flow payload.
 
     Args:
@@ -61,41 +87,54 @@ def _run_single_flow(flow_case, artifact_paths):
     """
     experiment_config = ExperimentConfig(
         domain=flow_case.domain_config,
-        num_sensors=NUM_SENSORS,
-        max_basis_dim=MAX_BASIS_DIM,
-        seed=SEED,
+        num_sensors=flow_config["num_sensors"],
+        max_basis_dim=flow_config["max_basis_dim"],
+        seed=flow_config["seed"],
+        quiver_step=flow_config["quiver_step"],
     )
 
     flow_frames_dir = None
     flow_gif_path = None
+    sensor_motion_gif_path = None
+    flow_trajectory_plot_path = artifact_paths.plots_dir / f"{flow_case.flow_name}_sensor_trajectories.png"
     if artifact_paths.frames_dir is not None:
         flow_frames_dir = artifact_paths.frames_dir / flow_case.flow_name
-        flow_gif_path = artifact_paths.frames_dir / f"{flow_case.flow_name}.gif"
+        flow_gif_path = artifact_paths.frames_dir / f"{flow_case.flow_name}_flow.gif"
+        sensor_motion_gif_path = artifact_paths.frames_dir / f"{flow_case.flow_name}_sensor_motion.gif"
 
     print(
         f"\n=== Sliding flow: {flow_case.flow_name} "
         f"| shape={flow_case.u.shape} "
         f"| dt={flow_case.dt_actual} "
-        f"| periodic={flow_case.is_periodic} ==="
+        f"| periodic={flow_case.is_periodic} "
+        f"| config={flow_config} ==="
     )
 
     result_df = run_experiment_sliding(
         flow_case.u,
         flow_case.v,
-        window_len=WINDOW_LEN,
-        step_size=STEP_SIZE,
-        min_dist_pct=MIN_DIST_PCT,
+        window_len=flow_config["window_len"],
+        step_size=flow_config["step_size"],
+        min_dist_pct=flow_config["min_dist_pct"],
         dt=flow_case.dt_actual,
         periodic=flow_case.is_periodic,
         config=experiment_config,
-        plot_windows=PLOT_WINDOWS,
-        save_window_frames=SAVE_WINDOW_FRAMES,
+        plot_windows=flow_config["plot_windows"],
+        save_window_frames=flow_config["save_window_frames"],
         frames_dir=str(flow_frames_dir) if flow_frames_dir is not None else None,
-        make_gif=MAKE_GIF,
-        gif_path=str(flow_gif_path) if flow_gif_path is not None else None,
-        gif_duration=GIF_DURATION,
+        make_flow_gif=flow_config["make_flow_gif"],
+        flow_gif_path=str(flow_gif_path) if flow_gif_path is not None else None,
+        make_sensor_motion_gif=flow_config["make_sensor_motion_gif"],
+        sensor_motion_gif_path=(
+            str(sensor_motion_gif_path) if sensor_motion_gif_path is not None else None
+        ),
+        sensor_tail_length=flow_config["sensor_tail_length"],
+        plot_trajectories=flow_config["plot_trajectories"],
+        trajectory_plot_path=str(flow_trajectory_plot_path),
+        trajectory_snapshot_indices=flow_config["trajectory_snapshot_indices"],
+        gif_duration=flow_config["gif_duration"],
         run_name=flow_case.flow_name,
-        show_progress=SHOW_PROGRESS,
+        show_progress=flow_config["show_progress"],
     )
 
     result_df = result_df.copy()
@@ -118,15 +157,15 @@ def main():
     artifact_paths = build_artifact_paths("sliding", include_frames=True)
     ensure_artifact_dirs(artifact_paths)
 
-    flow_cases = generate_standard_flow_cases(
-        total_steps=TOTAL_STEPS,
-        period=PERIOD,
-        flow_names=FLOW_NAMES,
-    )
-
     all_records = []
-    for flow_case in flow_cases:
-        flow_records = _run_single_flow(flow_case, artifact_paths)
+    for flow_name in FLOW_NAMES:
+        flow_config = _resolved_flow_config(flow_name)
+        flow_case = generate_standard_flow_cases(
+            total_steps=flow_config["total_steps"],
+            period=flow_config["period"],
+            flow_names=[flow_name],
+        )[0]
+        flow_records = _run_single_flow(flow_case, artifact_paths, flow_config)
         all_records.append(flow_records)
 
     combined_df = pd.concat(all_records, ignore_index=True)
