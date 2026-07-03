@@ -30,6 +30,7 @@ METHOD_COLORS = {
     METHOD_ONLINE: color_for_method("Moving POD-QR"),
 }
 METRIC_LABEL = r"Relative $L_h^2$ Error"
+CUMULATIVE_METRIC_LABEL = r"Running Mean Relative $L_h^2$ Error"
 PLOT_RC_PARAMS = PAPER_RC_PARAMS.copy()
 PLOT_RC_PARAMS.update(
     {
@@ -118,7 +119,7 @@ def _plot_sensor_history(
 
 def _error_y_limits(raw_df):
     """Return stable log-scale limits for one flow's error traces."""
-    values = pd.to_numeric(raw_df["L2_h"], errors="coerce").to_numpy(dtype=float)
+    values = pd.to_numeric(raw_df["cumulative_L2_h"], errors="coerce").to_numpy(dtype=float)
     values = values[np.isfinite(values) & (values > 0.0)]
     if values.size == 0:
         return (1e-8, 1.0)
@@ -146,7 +147,7 @@ def _plot_error_axis(axis, raw_df, current_t, *, is_final_frame=False, y_limits=
 
         axis.plot(
             method_df["t"],
-            method_df["L2_h"].where(method_df["L2_h"] > 0.0, np.nan),
+            method_df["cumulative_L2_h"].where(method_df["cumulative_L2_h"] > 0.0, np.nan),
             color=METHOD_COLORS[method_name],
             marker="o",
             markerfacecolor="white",
@@ -166,10 +167,10 @@ def _plot_error_axis(axis, raw_df, current_t, *, is_final_frame=False, y_limits=
     if y_limits is not None:
         axis.set_ylim(*y_limits)
     axis.set_xlabel("Time Index")
-    axis.set_ylabel(METRIC_LABEL)
+    axis.set_ylabel(CUMULATIVE_METRIC_LABEL)
     title = f"Errors Through t={current_t}"
     if is_final_frame:
-        title = "Errors Over Full Test Segment"
+        title = "Running Mean Errors Over Full Test Segment"
     axis.set_title(title)
     apply_axis_style(axis, x_grid=True, y_grid=True)
     finalize_legend(axis, loc="upper right")
@@ -315,7 +316,7 @@ def save_full_error_plot(flow_name, raw_df, out_path):
             is_final_frame=True,
             y_limits=_error_y_limits(raw_df),
         )
-        axis.set_title(f"{pretty_flow_name(flow_name)}: Full Test Error Trajectory")
+        axis.set_title(f"{pretty_flow_name(flow_name)}: Full Test Running Mean Error")
         fig.savefig(output_path, dpi=220)
         plt.close(fig)
 
